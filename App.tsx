@@ -32,42 +32,25 @@ const App: React.FC = () => {
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
   }));
 
-  const joinRoom = useCallback((roomId: string) => {
-    const roomRef = db.ref(`rooms/${roomId}`);
-    roomRef.once('value', (snap) => {
-      const data = snap.val();
-      if (!data) {
-        alert("Sala não encontrada.");
-        window.history.replaceState({}, document.title, "/");
-        return;
-      }
-      
-      setOnlineRoom(roomId);
-      setGameMode(GameMode.ONLINE);
-      setPlayerColor('b');
-      setIsWaiting(false);
-      setOpponent(data.playerA);
-      
-      roomRef.child('playerB').set(currentUser);
-      roomRef.child('status').set('playing');
-    });
-  }, [currentUser]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomFromUrl = params.get('room');
-    if (roomFromUrl) {
-      joinRoom(roomFromUrl);
-    }
-  }, [joinRoom]);
-
+  // Sincronização de Chat e Movimentos
   useEffect(() => {
     if (!onlineRoom) return;
+
     const roomRef = db.ref(`rooms/${onlineRoom}`);
-    const handleData = (snapshot: any) => {
+    
+    const handleValue = (snapshot: any) => {
       const data = snapshot.val();
       if (!data) return;
 
+      // 1. Sincronizar Jogadores
+      if (playerColor === 'w' && data.playerB && !opponent) {
+        setOpponent(data.playerB);
+        setIsWaiting(false);
+      } else if (playerColor === 'b' && data.playerA && !opponent) {
+        setOpponent(data.playerA);
+      }
+
+      // 2. Sincronizar Movimentos
       if (data.moves) {
         const movesArray = Object.values(data.moves) as any[];
         if (movesArray.length !== historyLenRef.current) {
@@ -83,15 +66,43 @@ const App: React.FC = () => {
 
           const lastMove = movesArray[movesArray.length - 1];
           const state = getGameState(tempBoard, lastMove.nextTurn);
-          if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${lastMove.move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+          if (state === 'checkmate') setGameOver(`Fim de jogo: Vitória das ${lastMove.move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
         }
       }
+
+      // 3. Sincronizar Chat
+      if (data.messages) {
+        setMessages(Object.values(data.messages));
+      }
+
+      // 4. Status
       if (data.status === 'resigned') setGameOver('O oponente desistiu.');
-      if (data.playerB && !opponent) setOpponent(data.playerB);
     };
-    roomRef.on('value', handleData);
-    return () => roomRef.off('value', handleData);
-  }, [onlineRoom, opponent]);
+
+    roomRef.on('value', handleValue);
+    return () => roomRef.off('value', handleValue);
+  }, [onlineRoom, playerColor, opponent]);
+
+  const joinRoom = useCallback((roomId: string) => {
+    const roomRef = db.ref(`rooms/${roomId}`);
+    roomRef.once('value', (snap) => {
+      const data = snap.val();
+      if (data) {
+        setOnlineRoom(roomId);
+        setGameMode(GameMode.ONLINE);
+        setPlayerColor('b');
+        setOpponent(data.playerA);
+        roomRef.child('playerB').set(currentUser);
+        roomRef.child('status').set('playing');
+      }
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const room = params.get('room');
+    if (room) joinRoom(room);
+  }, [joinRoom]);
 
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
@@ -111,11 +122,20 @@ const App: React.FC = () => {
       setTurn(nextTurn);
       setHistory(prev => [...prev, move]);
       historyLenRef.current += 1;
+      
       const state = getGameState(newBoard, nextTurn);
       if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
-      else if (state === 'stalemate') setGameOver('Empate por afogamento.');
     }
   }, [board, turn, gameMode, playerColor, onlineRoom, gameOver, history.length]);
+
+  const sendMessage = (text: string) => {
+    if (!onlineRoom) return;
+    const msgId = Date.now();
+    db.ref(`rooms/${onlineRoom}/messages/${msgId}`).set({
+      user: currentUser.name,
+      text: text
+    });
+  };
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 8);
@@ -131,47 +151,38 @@ const App: React.FC = () => {
     });
   };
 
-  const handleCopyLink = () => {
-    const fullLink = `${window.location.origin}/?room=${onlineRoom}`;
-    navigator.clipboard.writeText(fullLink);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 2000);
-  };
-
   const handleResign = () => {
     if (onlineRoom) db.ref(`rooms/${onlineRoom}/status`).set('resigned');
-    setGameOver('Você desistiu da partida.');
+    setGameOver('Você desistiu.');
   };
 
+  // IA move handler
   useEffect(() => {
-    if (gameOver || isWaiting) return;
-    const interval = setInterval(() => {
-      setTimers(prev => ({ ...prev, [turn]: Math.max(0, prev[turn] - 1) }));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [turn, gameOver, isWaiting]);
+    if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
+      const timeout = setTimeout(() => {
+        const move = getBestMove(board, 'b');
+        if (move) handleMove(move);
+      }, 600);
+      return () => clearTimeout(timeout);
+    }
+  }, [turn, gameMode, board, gameOver, handleMove]);
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#312e2b] text-white overflow-hidden">
       <Sidebar user={currentUser} />
       
-      <main className="flex-1 flex flex-col items-center overflow-y-auto pb-20 md:pb-0 pt-4 px-2 md:px-4 custom-scrollbar">
-        <div className="flex flex-col lg:flex-row gap-4 md:gap-8 w-full max-w-6xl items-center lg:items-start lg:mt-8">
+      <main className="flex-1 flex flex-col items-center overflow-y-auto pb-20 md:pb-0 pt-4 px-2 md:px-4">
+        <div className="flex flex-col lg:flex-row gap-4 md:gap-8 w-full max-w-6xl items-center lg:items-start lg:mt-4">
           
-          {/* Tabuleiro e Jogadores */}
           <div className="w-full max-w-[600px] flex flex-col gap-2">
-            {/* Oponente */}
-            <div className="flex justify-between items-center px-2 py-1 bg-[#262421]/50 rounded-lg border border-white/5">
+            <div className="flex justify-between items-center px-2 py-1 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-[#262421] rounded flex items-center justify-center text-gray-500 text-xs">
+                <div className="w-8 h-8 bg-[#262421] rounded flex items-center justify-center text-gray-500">
                   <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'}`}></i>
                 </div>
-                <div className="flex flex-col">
-                  <span className="font-bold text-xs md:text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Computador' : 'Aguardando...')}</span>
-                  <span className="text-[9px] text-gray-500 font-bold">1200</span>
-                </div>
+                <span className="font-bold text-xs">{opponent?.name || (gameMode === GameMode.AI ? 'Computador' : 'Oponente')}</span>
               </div>
-              <div className={`px-3 py-1 rounded font-mono text-lg md:text-xl transition-all ${turn !== playerColor && !gameOver ? 'bg-white text-black shadow-lg scale-105' : 'bg-[#211f1c] text-gray-400'}`}>
+              <div className={`px-3 py-1 rounded font-mono text-xl ${turn !== playerColor && !gameOver ? 'bg-white text-black' : 'bg-[#211f1c] text-gray-400'}`}>
                 {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
               </div>
             </div>
@@ -184,92 +195,69 @@ const App: React.FC = () => {
               lastMove={history.length > 0 ? history[history.length - 1] : null}
             />
 
-            {/* Você */}
-            <div className="flex justify-between items-center px-2 py-1 bg-[#262421]/50 rounded-lg border border-white/5">
+            <div className="flex justify-between items-center px-2 py-1 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-2">
-                <img src={currentUser.avatar} className="w-8 h-8 rounded border border-white/10" alt="Avatar" />
-                <div className="flex flex-col">
-                  <span className="font-bold text-xs md:text-sm">{currentUser.name}</span>
-                  <span className="text-[9px] text-[#81b64c] font-bold">ELO {currentUser.elo}</span>
-                </div>
+                <img src={currentUser.avatar} className="w-8 h-8 rounded" alt="Me" />
+                <span className="font-bold text-xs">{currentUser.name}</span>
               </div>
-              <div className={`px-3 py-1 rounded font-mono text-lg md:text-xl transition-all ${turn === playerColor && !gameOver ? 'bg-white text-black shadow-lg scale-105' : 'bg-[#211f1c] text-gray-400'}`}>
+              <div className={`px-3 py-1 rounded font-mono text-xl ${turn === playerColor && !gameOver ? 'bg-white text-black' : 'bg-[#211f1c] text-gray-400'}`}>
                 {Math.floor(timers[playerColor] / 60)}:{(timers[playerColor] % 60).toString().padStart(2, '0')}
               </div>
             </div>
           </div>
 
-          {/* Controles e Lances */}
-          <div className="w-full lg:w-[360px] flex flex-col gap-4 mb-4 md:mb-0">
-            <div className="h-[300px] md:h-[450px]">
+          <div className="w-full lg:w-[360px] flex flex-col gap-4">
+            <div className="h-[400px]">
               <GameControls 
                 history={history} 
-                onUndo={() => {}} 
+                onUndo={() => setBoard(createInitialBoard())} 
                 onResign={handleResign} 
                 turn={turn}
                 whiteTimer={timers.w} blackTimer={timers.b} 
                 gameMode={gameMode}
+                messages={messages}
+                onSendMessage={sendMessage}
               />
             </div>
             
             {gameMode === GameMode.LOCAL && !onlineRoom && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-2">
-                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-lg shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1 active:shadow-none">
-                  <i className="fas fa-globe mr-2"></i> JOGAR ONLINE
+              <div className="flex flex-col gap-2">
+                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1">
+                  JOGAR ONLINE
                 </button>
-                <button onClick={() => setGameMode(GameMode.AI)} className="bg-[#3c3a37] hover:bg-[#4a4844] py-4 rounded-lg font-bold transition-all border border-white/5">
-                  <i className="fas fa-robot mr-2"></i> IA
+                <button onClick={() => setGameMode(GameMode.AI)} className="bg-[#3c3a37] py-4 rounded-lg font-bold transition-all">
+                  CONTRA IA
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Modal de Espera */}
         {isWaiting && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-            <div className="bg-[#262421] p-6 md:p-8 rounded-2xl border border-white/10 text-center max-w-sm w-full shadow-2xl animate-in zoom-in duration-300">
-              <div className="relative w-16 h-16 mx-auto mb-6">
-                <div className="absolute inset-0 border-4 border-[#81b64c]/20 rounded-full"></div>
-                <div className="absolute inset-0 border-4 border-[#81b64c] border-t-transparent rounded-full animate-spin"></div>
-                <i className="fas fa-chess-king text-2xl text-[#81b64c] absolute inset-0 flex items-center justify-center"></i>
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4">
+            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center max-w-sm w-full shadow-2xl">
+              <div className="animate-spin text-4xl text-[#81b64c] mb-6"><i className="fas fa-circle-notch"></i></div>
+              <h2 className="text-2xl font-bold mb-2">Aguardando...</h2>
+              <p className="text-gray-400 text-sm mb-6">Envie o link para um amigo jogar:</p>
+              <div className="bg-[#1a1917] p-3 rounded-xl mb-6 flex flex-col gap-2">
+                <input readOnly value={`${window.location.origin}/?room=${onlineRoom}`} className="bg-transparent text-[10px] text-[#81b64c] text-center outline-none" />
+                <button onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`);
+                  setCopyFeedback(true);
+                  setTimeout(() => setCopyFeedback(false), 2000);
+                }} className="bg-[#3c3a37] py-2 rounded font-bold text-xs">{copyFeedback ? 'COPIADO!' : 'COPIAR LINK'}</button>
               </div>
-              
-              <h2 className="text-xl md:text-2xl font-bold mb-2">Desafiar Amigo</h2>
-              <p className="text-gray-400 text-xs md:text-sm mb-6">Compartilhe o link para começar:</p>
-              
-              <div className="bg-[#1a1917] p-3 rounded-xl mb-6 border border-white/5 flex flex-col gap-2">
-                <input 
-                  readOnly 
-                  value={`${window.location.origin}/?room=${onlineRoom}`} 
-                  className="bg-transparent text-[10px] md:text-xs outline-none text-[#81b64c] font-mono truncate text-center" 
-                />
-                <button 
-                  onClick={handleCopyLink} 
-                  className={`${copyFeedback ? 'bg-[#81b64c]' : 'bg-[#3c3a37] hover:bg-[#4a4844]'} transition-all py-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2`}
-                >
-                  <i className={`fas ${copyFeedback ? 'fa-check' : 'fa-copy'}`}></i>
-                  {copyFeedback ? 'Copiado!' : 'Copiar Link Completo'}
-                </button>
-              </div>
-              
-              <button onClick={() => window.location.reload()} className="text-gray-500 hover:text-white font-bold text-[10px] uppercase tracking-widest transition-colors">
-                Cancelar
-              </button>
+              <button onClick={() => window.location.reload()} className="text-red-500 font-bold text-xs uppercase">Cancelar</button>
             </div>
           </div>
         )}
 
-        {/* Modal Fim de Jogo */}
         {gameOver && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center shadow-2xl max-w-xs w-full animate-in zoom-in duration-300">
-              <div className="text-5xl text-yellow-500 mb-4"><i className="fas fa-trophy"></i></div>
-              <h2 className="text-xl md:text-2xl font-bold mb-2">Partida Encerrada</h2>
-              <p className="text-gray-400 text-sm mb-8 leading-relaxed">{gameOver}</p>
-              <button onClick={() => window.location.reload()} className="w-full bg-[#81b64c] px-8 py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)] hover:bg-[#95c562] transition-all">
-                NOVA PARTIDA
-              </button>
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
+            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center shadow-2xl max-w-xs w-full">
+              <h2 className="text-2xl font-bold mb-2">Fim de Jogo</h2>
+              <p className="text-gray-400 text-sm mb-8">{gameOver}</p>
+              <button onClick={() => window.location.reload()} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)]">NOVA PARTIDA</button>
             </div>
           </div>
         )}

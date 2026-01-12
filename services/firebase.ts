@@ -1,5 +1,5 @@
 
-// Credenciais reais do usuário integradas
+// Credenciais integradas
 const firebaseConfig = {
   apiKey: "AIzaSyBL8Nh5v9gy6w2NjK8foZi18t-vK31KRf0",
   authDomain: "chess-d6bcf.firebaseapp.com",
@@ -11,10 +11,10 @@ const firebaseConfig = {
 };
 
 // @ts-ignore
-if (!firebase.apps.length) {
-  // @ts-ignore
-  firebase.initializeApp(firebaseConfig);
+const fb = window.firebase;
+
+if (!fb.apps.length) {
+  fb.initializeApp(firebaseConfig);
 }
 
-// @ts-ignore
-export const db = firebase.database();
+export const db = fb.database();

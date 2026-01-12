@@ -4,12 +4,8 @@ import Sidebar from './components/Sidebar';
 import ChessBoard from './components/ChessBoard';
 import GameControls from './components/GameControls';
 import { Board, Move, Color, GameMode } from './types';
-import { createInitialBoard, makeMove, getGameState, isCheck } from './services/chessLogic';
-import { saveGameToLocal } from './services/storage';
-
-// Nota: Para produção, instale 'firebase/app' e 'firebase/database'
-// Aqui usaremos uma implementação robusta que simula o comportamento do Firebase 
-// para garantir que o app funcione imediatamente em ambientes restritos.
+import { createInitialBoard, makeMove, getGameState } from './services/chessLogic';
+import { db } from './services/firebase';
 
 const App: React.FC = () => {
   const [board, setBoard] = useState<Board>(createInitialBoard());
@@ -24,50 +20,10 @@ const App: React.FC = () => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
 
-  // Ref para rastrear o último lance processado para evitar loops
-  const lastMoveIdx = useRef<number>(-1);
+  // Referência para evitar loops de atualização
+  const isInternalUpdate = useRef(false);
 
-  const addSystemMsg = (text: string) => {
-    setMessages(prev => [...prev, { user: 'Sistema', text }]);
-  };
-
-  // --- LÓGICA DE SINCRONIZAÇÃO VIA STORAGE (SIMULANDO FIREBASE HTTPS) ---
-  // Em um cenário real, você substituiria estas funções por:
-  // firebase.database().ref('rooms/' + id).on('value', ...)
-  
-  const syncWithCloud = useCallback(async (roomId: string) => {
-    try {
-      // Simulação de Polling via HTTPS (Funciona em Firewalls)
-      // Substitua por sua chamada Firebase real aqui
-      const remoteData = localStorage.getItem(`room_${roomId}`);
-      if (remoteData) {
-        const data = JSON.parse(remoteData);
-        
-        // Sincronizar lances
-        if (data.moves && data.moves.length > history.length) {
-          const newMoves = data.moves.slice(history.length);
-          newMoves.forEach((m: Move) => {
-            setBoard(prev => makeMove(prev, m));
-            setHistory(prev => [...prev, m]);
-            setTurn(m.piece.color === 'w' ? 'b' : 'w');
-          });
-        }
-
-        // Sincronizar chat
-        if (data.messages && data.messages.length > messages.length) {
-          setMessages(data.messages);
-        }
-
-        // Sincronizar desistência
-        if (data.status === 'resigned' && !gameOver) {
-          setGameOver('O oponente desistiu.');
-        }
-      }
-    } catch (e) {
-      console.error("Erro na sincronização:", e);
-    }
-  }, [history.length, messages.length, gameOver]);
-
+  // Escuta mudanças no Firebase
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomId = params.get('room');
@@ -75,24 +31,40 @@ const App: React.FC = () => {
     if (roomId) {
       setOnlineRoom(roomId);
       setGameMode(GameMode.ONLINE);
-      setPlayerColor('b'); // Quem entra pelo link é sempre pretas
+      setPlayerColor('b');
       setIsWaiting(false);
-      addSystemMsg('Conectado à sala via HTTPS (Firewall Safe).');
-      
-      const interval = setInterval(() => syncWithCloud(roomId), 2000);
-      return () => clearInterval(interval);
-    }
-  }, [syncWithCloud]);
 
-  const pushToCloud = (roomId: string, updates: any) => {
-    // Simulação de database.ref().update()
-    const current = JSON.parse(localStorage.getItem(`room_${roomId}`) || '{}');
-    const newData = { ...current, ...updates };
-    localStorage.setItem(`room_${roomId}`, JSON.stringify(newData));
-    
-    // Dispara evento para outras abas no mesmo PC (para testes)
-    window.dispatchEvent(new Event('storage'));
-  };
+      const roomRef = db.ref(`rooms/${roomId}`);
+      roomRef.on('value', (snapshot: any) => {
+        const data = snapshot.val();
+        if (!data) return;
+
+        // Se for uma atualização externa (do oponente)
+        if (!isInternalUpdate.current) {
+          if (data.moves && data.moves.length > history.length) {
+            let currentBoard = createInitialBoard();
+            data.moves.forEach((m: Move) => {
+              currentBoard = makeMove(currentBoard, m);
+            });
+            setBoard(currentBoard);
+            setHistory(data.moves);
+            setTurn(data.lastTurn || 'w');
+          }
+
+          if (data.messages) {
+            setMessages(data.messages);
+          }
+
+          if (data.status === 'resigned' && !gameOver) {
+            setGameOver('O oponente desistiu da partida.');
+          }
+        }
+        isInternalUpdate.current = false;
+      });
+
+      return () => roomRef.off();
+    }
+  }, [onlineRoom, gameOver]); // Adicionado dependências mínimas
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -101,19 +73,23 @@ const App: React.FC = () => {
     setPlayerColor('w');
     setIsWaiting(true);
     
-    // Inicializa a sala no "Firebase"
-    pushToCloud(id, {
+    const initialData = {
       status: 'waiting',
       moves: [],
-      messages: [{ user: 'Sistema', text: 'Sala criada. Aguardando oponente...' }],
-      createdAt: Date.now()
-    });
+      messages: [{ user: 'Sistema', text: 'Convite Cloud via Firebase criado.' }],
+      createdAt: Date.now(),
+      lastTurn: 'w'
+    };
 
-    addSystemMsg('Sala criada com sucesso via Túnel HTTPS.');
-    
-    const interval = setInterval(() => syncWithCloud(id), 2000);
-    // @ts-ignore
-    window.gameInterval = interval;
+    db.ref(`rooms/${id}`).set(initialData);
+
+    // Escutar quando oponente entrar (opcional para mudar status)
+    db.ref(`rooms/${id}`).on('value', (snapshot: any) => {
+      const data = snapshot.val();
+      if (data && data.moves && data.moves.length > 0) {
+        setIsWaiting(false);
+      }
+    });
   };
 
   const handleMove = useCallback((move: Move) => {
@@ -129,14 +105,17 @@ const App: React.FC = () => {
     setTurn(nextTurn);
 
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      pushToCloud(onlineRoom, {
+      isInternalUpdate.current = true;
+      db.ref(`rooms/${onlineRoom}`).update({
         moves: newHistory,
         lastTurn: nextTurn
       });
     }
 
     const gameState = getGameState(newBoard, nextTurn);
-    if (gameState === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${turn === 'w' ? 'Brancas' : 'Pretas'}`);
+    if (gameState === 'checkmate') {
+      setGameOver(`Xeque-mate! Vitória das ${turn === 'w' ? 'Brancas' : 'Pretas'}`);
+    }
   }, [gameOver, turn, gameMode, playerColor, board, history, onlineRoom]);
 
   const handleUndo = useCallback(() => {
@@ -151,7 +130,7 @@ const App: React.FC = () => {
 
   const handleResign = () => {
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      pushToCloud(onlineRoom, { status: 'resigned' });
+      db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
     }
     setGameOver(`Você desistiu. Vitória das ${playerColor === 'w' ? 'Pretas' : 'Brancas'}`);
   };
@@ -161,15 +140,14 @@ const App: React.FC = () => {
     const newMessages = [...messages, msg];
     setMessages(newMessages);
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      pushToCloud(onlineRoom, { messages: newMessages });
+      db.ref(`rooms/${onlineRoom}`).update({ messages: newMessages });
     }
   };
 
   useEffect(() => {
-    if (gameOver) return;
+    if (gameOver || isWaiting) return;
     const interval = setInterval(() => {
       setTimers(prev => {
-        if (isWaiting) return prev;
         const newVal = prev[turn] - 1;
         if (newVal <= 0) {
           setGameOver(`Tempo esgotado!`);
@@ -188,64 +166,55 @@ const App: React.FC = () => {
         <div className="flex flex-col items-center w-full max-w-[600px] relative">
           <div className="w-full flex justify-between items-center mb-4 px-2">
             <div className="flex items-center space-x-3 text-white">
-              <div className={`w-3 h-3 rounded-full ${gameMode === GameMode.ONLINE ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`}></div>
-              <span className="font-bold text-gray-300 text-xs uppercase tracking-tighter">
-                {gameMode === GameMode.ONLINE ? `MODO CLOUD (${playerColor === 'w' ? 'Brancas' : 'Pretas'})` : 'JOGO LOCAL'}
+              <div className={`w-2.5 h-2.5 rounded-full ${gameMode === GameMode.ONLINE ? 'bg-[#81b64c] shadow-[0_0_8px_#81b64c]' : 'bg-gray-500'}`}></div>
+              <span className="font-bold text-gray-400 text-[10px] uppercase tracking-widest">
+                {gameMode === GameMode.ONLINE ? `FIREBASE CLOUD` : 'MODO LOCAL'}
               </span>
             </div>
             {!onlineRoom && (
               <button 
                 onClick={createOnlineGame} 
-                className="bg-[#81b64c] hover:bg-[#95c562] px-6 py-2 rounded-lg text-sm font-bold text-white shadow-[0_4px_0_rgb(69,101,40)] transition-all"
+                className="bg-[#81b64c] hover:bg-[#95c562] px-5 py-2 rounded-lg text-xs font-bold text-white shadow-[0_3px_0_rgb(69,101,40)] active:translate-y-[1px] active:shadow-none transition-all"
               >
-                Criar Sala Cloud
+                Convidar via Firebase
               </button>
             )}
           </div>
 
           <ChessBoard board={board} onMove={handleMove} turn={turn} isFlipped={playerColor === 'b'} />
 
-          {/* Modal de Convite Firebase-like */}
           {isWaiting && onlineRoom && (
-            <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[9999] p-4">
-              <div className="bg-[#262421] w-full max-w-md rounded-2xl shadow-2xl border border-[#3c3a37] p-8 text-center">
-                <div className="w-20 h-20 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <i className="fas fa-cloud text-3xl text-[#81b64c]"></i>
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+              <div className="bg-[#262421] w-full max-w-sm rounded-xl shadow-2xl border border-[#3c3a37] p-8 text-center animate-in fade-in zoom-in duration-200">
+                <div className="mb-4">
+                  <i className="fas fa-cloud text-[#81b64c] text-4xl mb-2"></i>
+                  <h3 className="text-xl font-bold text-white">Sala Cloud Criada</h3>
                 </div>
-                <h3 className="text-2xl font-bold text-white mb-2">Partida Cloud Ativa</h3>
-                <p className="text-gray-400 text-sm mb-6">Este link usa HTTPS padrão e funciona em qualquer rede corporativa.</p>
-                
-                <div className="bg-[#1a1917] p-4 rounded-xl border border-[#3c3a37] mb-8">
-                  <p className="text-[10px] text-gray-500 uppercase font-bold mb-2">Link de Acesso</p>
+                <div className="bg-[#1a1917] p-3 rounded-lg border border-[#3c3a37] mb-6">
                   <div className="flex items-center">
-                    <input readOnly value={window.location.origin + '/?room=' + onlineRoom} className="bg-transparent text-xs text-[#81b64c] flex-1 outline-none truncate font-mono" />
+                    <input readOnly value={window.location.origin + '/?room=' + onlineRoom} className="bg-transparent text-[11px] text-[#81b64c] flex-1 outline-none truncate font-mono" />
                     <button 
                       onClick={() => { 
                         navigator.clipboard.writeText(window.location.origin + '/?room=' + onlineRoom); 
                         setCopySuccess(true); 
                         setTimeout(() => setCopySuccess(false), 2000); 
                       }}
-                      className="ml-3 p-2 hover:bg-white/5 rounded-lg transition-colors"
+                      className="ml-2 text-gray-400 hover:text-white"
                     >
-                      <i className={`fas ${copySuccess ? 'fa-check text-green-500' : 'fa-copy text-gray-400'}`}></i>
+                      <i className={`fas ${copySuccess ? 'fa-check text-green-500' : 'fa-copy'}`}></i>
                     </button>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-center space-x-3 text-gray-400 text-xs animate-pulse mb-8">
-                  <div className="w-2 h-2 bg-[#81b64c] rounded-full"></div>
-                  <span>Aguardando oponente entrar...</span>
-                </div>
-
-                <button onClick={() => window.location.href = '/'} className="w-full py-3 rounded-xl bg-red-500/10 text-red-500 font-bold hover:bg-red-500/20 transition-all">
-                  Cancelar Partida
+                <p className="text-gray-500 text-xs mb-8">Esta conexão usa HTTPS e funciona em qualquer firewall.</p>
+                <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline">
+                  Cancelar
                 </button>
               </div>
             </div>
           )}
         </div>
 
-        <div className="w-full lg:w-[400px]">
+        <div className="w-full lg:w-[380px]">
           <GameControls 
             history={history} 
             onUndo={handleUndo} 
@@ -261,12 +230,12 @@ const App: React.FC = () => {
       </main>
 
       {gameOver && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[10000] p-4">
-          <div className="bg-[#262421] p-10 rounded-2xl shadow-2xl border border-white/10 max-w-sm w-full text-center">
-            <h2 className="text-3xl font-bold text-white mb-4">Fim de Jogo</h2>
-            <p className="text-gray-400 mb-8">{gameOver}</p>
-            <button onClick={() => window.location.href = '/'} className="w-full bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-xl font-bold text-white">
-              Nova Partida
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[10000] p-4">
+          <div className="bg-[#262421] p-8 rounded-xl shadow-2xl border border-white/5 max-w-xs w-full text-center">
+            <h2 className="text-2xl font-bold text-white mb-2">Fim de Jogo</h2>
+            <p className="text-gray-400 text-sm mb-8">{gameOver}</p>
+            <button onClick={() => window.location.href = '/'} className="w-full bg-[#81b64c] py-3 rounded-lg font-bold text-white shadow-[0_3px_0_rgb(69,101,40)]">
+              Jogar Novamente
             </button>
           </div>
         </div>

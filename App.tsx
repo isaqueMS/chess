@@ -20,8 +20,8 @@ const App: React.FC = () => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
 
-  // Referência para evitar loops de atualização
-  const isInternalUpdate = useRef(false);
+  // Ref para evitar que o Firebase sobrescreva o estado enquanto o próprio usuário está movendo
+  const skipNextRemoteUpdate = useRef(false);
 
   // Escuta mudanças no Firebase
   useEffect(() => {
@@ -31,40 +31,49 @@ const App: React.FC = () => {
     if (roomId) {
       setOnlineRoom(roomId);
       setGameMode(GameMode.ONLINE);
-      setPlayerColor('b');
+      setPlayerColor('b'); // Quem entra pelo link é sempre Pretas
       setIsWaiting(false);
 
       const roomRef = db.ref(`rooms/${roomId}`);
+      
+      // Quando o oponente entra, ele avisa o Host
+      roomRef.child('status').set('playing');
+
       roomRef.on('value', (snapshot: any) => {
         const data = snapshot.val();
         if (!data) return;
 
-        // Se for uma atualização externa (do oponente)
-        if (!isInternalUpdate.current) {
-          if (data.moves && data.moves.length > history.length) {
-            let currentBoard = createInitialBoard();
-            data.moves.forEach((m: Move) => {
-              currentBoard = makeMove(currentBoard, m);
-            });
-            setBoard(currentBoard);
-            setHistory(data.moves);
-            setTurn(data.lastTurn || 'w');
-          }
-
-          if (data.messages) {
-            setMessages(data.messages);
-          }
-
-          if (data.status === 'resigned' && !gameOver) {
-            setGameOver('O oponente desistiu da partida.');
-          }
+        if (skipNextRemoteUpdate.current) {
+          skipNextRemoteUpdate.current = false;
+          return;
         }
-        isInternalUpdate.current = false;
+
+        // Sincronizar lances e turno
+        if (data.moves && data.moves.length !== history.length) {
+          let currentBoard = createInitialBoard();
+          data.moves.forEach((m: Move) => {
+            currentBoard = makeMove(currentBoard, m);
+          });
+          setBoard(currentBoard);
+          setHistory(data.moves);
+        }
+        
+        if (data.lastTurn) {
+          setTurn(data.lastTurn);
+        }
+
+        if (data.messages) {
+          setMessages(data.messages);
+        }
+
+        if (data.status === 'resigned' && !gameOver) {
+          setGameOver('O oponente desistiu da partida.');
+        }
       });
 
       return () => roomRef.off();
     }
-  }, [onlineRoom, gameOver]); // Adicionado dependências mínimas
+  }, [onlineRoom]);
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -76,17 +85,16 @@ const App: React.FC = () => {
     const initialData = {
       status: 'waiting',
       moves: [],
-      messages: [{ user: 'Sistema', text: 'Convite Cloud via Firebase criado.' }],
+      messages: [{ user: 'Sistema', text: 'Sala Cloud Ativa. Aguardando oponente...' }],
       createdAt: Date.now(),
       lastTurn: 'w'
     };
 
     db.ref(`rooms/${id}`).set(initialData);
 
-    // Escutar quando oponente entrar (opcional para mudar status)
-    db.ref(`rooms/${id}`).on('value', (snapshot: any) => {
-      const data = snapshot.val();
-      if (data && data.moves && data.moves.length > 0) {
+    // Host fica ouvindo para saber quando o oponente entrar
+    db.ref(`rooms/${id}/status`).on('value', (snapshot: any) => {
+      if (snapshot.val() === 'playing') {
         setIsWaiting(false);
       }
     });
@@ -94,21 +102,27 @@ const App: React.FC = () => {
 
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
-    if (gameMode === GameMode.ONLINE && turn !== playerColor) return;
+    
+    // Bloqueio de turno no modo online
+    if (gameMode === GameMode.ONLINE && turn !== playerColor) {
+      return;
+    }
 
     const newBoard = makeMove(board, move);
     const nextTurn = turn === 'w' ? 'b' : 'w';
     
+    // Atualização Local Imediata (Experiência do Usuário)
     setBoard(newBoard);
     const newHistory = [...history, move];
     setHistory(newHistory);
     setTurn(nextTurn);
 
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      isInternalUpdate.current = true;
+      skipNextRemoteUpdate.current = true; // Não processe o eco do Firebase deste lance
       db.ref(`rooms/${onlineRoom}`).update({
         moves: newHistory,
-        lastTurn: nextTurn
+        lastTurn: nextTurn,
+        status: 'playing'
       });
     }
 
@@ -144,6 +158,7 @@ const App: React.FC = () => {
     }
   };
 
+  // Lógica de Timers
   useEffect(() => {
     if (gameOver || isWaiting) return;
     const interval = setInterval(() => {
@@ -166,9 +181,9 @@ const App: React.FC = () => {
         <div className="flex flex-col items-center w-full max-w-[600px] relative">
           <div className="w-full flex justify-between items-center mb-4 px-2">
             <div className="flex items-center space-x-3 text-white">
-              <div className={`w-2.5 h-2.5 rounded-full ${gameMode === GameMode.ONLINE ? 'bg-[#81b64c] shadow-[0_0_8px_#81b64c]' : 'bg-gray-500'}`}></div>
+              <div className={`w-2.5 h-2.5 rounded-full ${gameMode === GameMode.ONLINE ? 'bg-[#81b64c] shadow-[0_0_8px_#81b64c] animate-pulse' : 'bg-gray-500'}`}></div>
               <span className="font-bold text-gray-400 text-[10px] uppercase tracking-widest">
-                {gameMode === GameMode.ONLINE ? `FIREBASE CLOUD` : 'MODO LOCAL'}
+                {gameMode === GameMode.ONLINE ? `CONECTADO: VOCÊ É ${playerColor === 'w' ? 'BRANCAS' : 'PRETAS'}` : 'MODO LOCAL'}
               </span>
             </div>
             {!onlineRoom && (
@@ -176,19 +191,26 @@ const App: React.FC = () => {
                 onClick={createOnlineGame} 
                 className="bg-[#81b64c] hover:bg-[#95c562] px-5 py-2 rounded-lg text-xs font-bold text-white shadow-[0_3px_0_rgb(69,101,40)] active:translate-y-[1px] active:shadow-none transition-all"
               >
-                Convidar via Firebase
+                Nova Partida Online
               </button>
             )}
           </div>
 
-          <ChessBoard board={board} onMove={handleMove} turn={turn} isFlipped={playerColor === 'b'} />
+          <ChessBoard 
+            board={board} 
+            onMove={handleMove} 
+            turn={turn} 
+            isFlipped={playerColor === 'b'} 
+          />
 
           {isWaiting && onlineRoom && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
               <div className="bg-[#262421] w-full max-w-sm rounded-xl shadow-2xl border border-[#3c3a37] p-8 text-center animate-in fade-in zoom-in duration-200">
                 <div className="mb-4">
-                  <i className="fas fa-cloud text-[#81b64c] text-4xl mb-2"></i>
-                  <h3 className="text-xl font-bold text-white">Sala Cloud Criada</h3>
+                  <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i className="fas fa-link text-[#81b64c] text-2xl"></i>
+                  </div>
+                  <h3 className="text-xl font-bold text-white">Aguardando Oponente</h3>
                 </div>
                 <div className="bg-[#1a1917] p-3 rounded-lg border border-[#3c3a37] mb-6">
                   <div className="flex items-center">
@@ -199,15 +221,15 @@ const App: React.FC = () => {
                         setCopySuccess(true); 
                         setTimeout(() => setCopySuccess(false), 2000); 
                       }}
-                      className="ml-2 text-gray-400 hover:text-white"
+                      className="ml-2 text-gray-400 hover:text-white p-2"
                     >
                       <i className={`fas ${copySuccess ? 'fa-check text-green-500' : 'fa-copy'}`}></i>
                     </button>
                   </div>
                 </div>
-                <p className="text-gray-500 text-xs mb-8">Esta conexão usa HTTPS e funciona em qualquer firewall.</p>
-                <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline">
-                  Cancelar
+                <p className="text-gray-500 text-xs mb-8">A partida começará assim que seu amigo abrir este link.</p>
+                <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline font-bold">
+                  CANCELAR SALA
                 </button>
               </div>
             </div>

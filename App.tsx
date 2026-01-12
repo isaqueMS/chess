@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import ChessBoard from './components/ChessBoard';
@@ -24,7 +23,7 @@ const App: React.FC = () => {
   const [onlineRoom, setOnlineRoom] = useState<string | null>(null);
   const [playerColor, setPlayerColor] = useState<Color>('w');
   const [isWaiting, setIsWaiting] = useState(false);
-  const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
+  const [messages, setMessages] = useState<{user: string, text: string, timestamp: number}[]>([]);
   const [opponent, setOpponent] = useState<User | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
@@ -38,10 +37,25 @@ const App: React.FC = () => {
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
   }));
 
+  // Função para resetar o jogo
+  const resetGame = useCallback(() => {
+    const initialBoard = createInitialBoard();
+    boardRef.current = initialBoard;
+    historyRef.current = [];
+    
+    setBoard(initialBoard);
+    setHistory([]);
+    setTurn('w');
+    setGameOver(null);
+    setTimers({ w: 600, b: 600 });
+  }, []);
+
   // Função de Execução de Lance (O coração do jogo)
   const applyMove = useCallback((move: Move) => {
     // 1. Cálculo Matemático
     const newBoard = makeMove(boardRef.current, move);
+    if (!newBoard) return; // Movimento inválido
+
     boardRef.current = newBoard;
     historyRef.current.push(move);
 
@@ -52,11 +66,42 @@ const App: React.FC = () => {
     const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
     setTurn(nextTurn);
 
-    // 3. Verificação de Fim de Jogo
+    // 3. Atualizar timers (adicionar tempo após cada movimento)
+    setTimers(prev => ({
+      ...prev,
+      [move.piece.color === 'w' ? 'b' : 'w']: prev[move.piece.color === 'w' ? 'b' : 'w'] + 2 // Adiciona 2 segundos
+    }));
+
+    // 4. Verificação de Fim de Jogo
     const state = getGameState(newBoard, nextTurn);
-    if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
-    if (state === 'stalemate') setGameOver('Empate por afogamento.');
+    if (state === 'checkmate') {
+      setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+    } else if (state === 'stalemate') {
+      setGameOver('Empate por afogamento.');
+    } else if (state === 'check') {
+      // Pode adicionar feedback visual de xeque se quiser
+    }
   }, []);
+
+  // Função para desfazer o último movimento
+  const handleUndo = useCallback(() => {
+    if (historyRef.current.length === 0 || gameOver || 
+        (gameMode === GameMode.ONLINE && turn !== playerColor)) return;
+
+    // Remove o último movimento
+    historyRef.current.pop();
+    
+    // Reconstroi o tabuleiro do início
+    const newBoard = createInitialBoard();
+    historyRef.current.forEach(move => {
+      makeMove(newBoard, move);
+    });
+    
+    boardRef.current = newBoard;
+    setBoard([...newBoard]);
+    setHistory([...historyRef.current]);
+    setTurn(prev => prev === 'w' ? 'b' : 'w');
+  }, [gameOver, gameMode, turn, playerColor]);
 
   // Loop do Cronômetro
   useEffect(() => {
@@ -79,23 +124,28 @@ const App: React.FC = () => {
 
   // Listener do Firebase (Apenas recebe lances de terceiros)
   useEffect(() => {
-    if (!onlineRoom) return;
+    if (!onlineRoom || gameMode !== GameMode.ONLINE) return;
 
     const roomRef = db.ref(`rooms/${onlineRoom}`);
     
     // Escuta Metadados da Sala
-    roomRef.on('value', (snap) => {
+    const unsubscribeRoom = roomRef.on('value', (snap) => {
       const data = snap.val();
       if (!data) return;
+      
       if (playerColor === 'w' && data.playerB) setOpponent(data.playerB);
       if (playerColor === 'b' && data.playerA) setOpponent(data.playerA);
+      
       if (data.status === 'playing') setIsWaiting(false);
       if (data.status === 'resigned') setGameOver('O oponente desistiu.');
+      if (data.status === 'finished') {
+        setGameOver(data.result || 'Partida encerrada');
+      }
     });
 
-    // Escuta Lances (O segredo: child_added garante que processamos um por um)
+    // Escuta Lances
     const movesRef = roomRef.child('moves');
-    movesRef.on('child_added', (snap) => {
+    const unsubscribeMoves = movesRef.on('child_added', (snap) => {
       const data = snap.val();
       if (!data) return;
 
@@ -107,19 +157,26 @@ const App: React.FC = () => {
     });
 
     // Chat
-    roomRef.child('messages').on('value', (snap) => {
-      if (snap.exists()) setMessages(Object.values(snap.val()));
+    const unsubscribeMessages = roomRef.child('messages').on('value', (snap) => {
+      if (snap.exists()) {
+        const messagesData = snap.val();
+        setMessages(Object.values(messagesData));
+      }
     });
 
     return () => {
-      roomRef.off();
-      movesRef.off();
+      roomRef.off('value', unsubscribeRoom);
+      movesRef.off('child_added', unsubscribeMoves);
+      roomRef.child('messages').off('value', unsubscribeMessages);
     };
-  }, [onlineRoom, playerColor, currentUser.id, applyMove]);
+  }, [onlineRoom, playerColor, currentUser.id, applyMove, gameMode]);
 
   // Handler de Clique no Tabuleiro
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
+    
+    // Verifica se é o turno do jogador
+    if (turn !== move.piece.color) return;
 
     // Se for Online, valida se é o turno do jogador
     if (gameMode === GameMode.ONLINE) {
@@ -131,7 +188,7 @@ const App: React.FC = () => {
       // Aplica Localmente (Feedback Instantâneo)
       applyMove(move);
 
-      // Sincroniza Coordenadas
+      // Sincroniza com Firebase
       db.ref(`rooms/${onlineRoom}/moves`).push({
         move,
         playerId: currentUser.id,
@@ -155,19 +212,22 @@ const App: React.FC = () => {
   }, [turn, gameMode, gameOver, applyMove]);
 
   // Funções de Gerenciamento de Sala
-  const createOnlineGame = () => {
+  const createOnlineGame = useCallback(() => {
     const id = Math.random().toString(36).substring(2, 8);
     setOnlineRoom(id);
     setGameMode(GameMode.ONLINE);
     setPlayerColor('w');
     setIsWaiting(true);
+    setOpponent(null);
+    resetGame();
+    
     db.ref(`rooms/${id}`).set({
       id,
       status: 'waiting',
       playerA: currentUser,
       createdAt: Date.now()
     });
-  };
+  }, [currentUser, resetGame]);
 
   const joinRoom = useCallback((roomId: string) => {
     db.ref(`rooms/${roomId}`).once('value').then((snap) => {
@@ -177,13 +237,15 @@ const App: React.FC = () => {
         setGameMode(GameMode.ONLINE);
         setPlayerColor('b');
         setOpponent(data.playerA);
+        resetGame();
+        
         db.ref(`rooms/${roomId}`).update({
           playerB: currentUser,
           status: 'playing'
         });
       }
     });
-  }, [currentUser]);
+  }, [currentUser, resetGame]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -191,15 +253,40 @@ const App: React.FC = () => {
     if (room) joinRoom(room);
   }, [joinRoom]);
 
-  const sendMessage = (text: string) => {
-    if (onlineRoom) {
+  const sendMessage = useCallback((text: string) => {
+    if (onlineRoom && text.trim()) {
       db.ref(`rooms/${onlineRoom}/messages`).push({
         user: currentUser.name,
-        text,
+        text: text.trim(),
         timestamp: Date.now()
       });
     }
-  };
+  }, [onlineRoom, currentUser.name]);
+
+  const handleResign = useCallback(() => {
+    if (onlineRoom) {
+      db.ref(`rooms/${onlineRoom}`).update({ 
+        status: 'finished',
+        result: 'Vitória por desistência'
+      });
+      setGameOver('Você desistiu da partida.');
+    } else {
+      setGameOver('Partida encerrada por desistência.');
+    }
+  }, [onlineRoom]);
+
+  const handleNewGame = useCallback(() => {
+    if (onlineRoom) {
+      // Limpar sala online
+      db.ref(`rooms/${onlineRoom}`).remove();
+    }
+    setOnlineRoom(null);
+    setGameMode(GameMode.LOCAL);
+    setOpponent(null);
+    setIsWaiting(false);
+    resetGame();
+    setMessages([]);
+  }, [onlineRoom, resetGame]);
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#312e2b] text-white overflow-hidden">
@@ -213,7 +300,11 @@ const App: React.FC = () => {
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-[#3c3a37] rounded flex items-center justify-center">
-                  <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'} text-gray-400`}></i>
+                  {opponent?.avatar ? (
+                    <img src={opponent.avatar} className="w-10 h-10 rounded" alt="Avatar" />
+                  ) : (
+                    <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'} text-gray-400`}></i>
+                  )}
                 </div>
                 <div>
                   <div className="font-bold text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish 11' : 'Oponente')}</div>
@@ -231,6 +322,7 @@ const App: React.FC = () => {
               turn={turn} 
               isFlipped={playerColor === 'b'}
               lastMove={history.length > 0 ? history[history.length - 1] : null}
+              gameOver={!!gameOver}
             />
 
             {/* Usuário */}
@@ -252,25 +344,34 @@ const App: React.FC = () => {
             <div className="h-[450px]">
               <GameControls 
                 history={history} 
-                onUndo={() => {}} 
-                onResign={() => {
-                  if (onlineRoom) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
-                  setGameOver('Você desistiu da partida.');
-                }} 
+                onUndo={handleUndo} 
+                onResign={handleResign}
                 turn={turn}
-                whiteTimer={timers.w} blackTimer={timers.b} 
+                whiteTimer={timers.w} 
+                blackTimer={timers.b} 
                 gameMode={gameMode}
                 messages={messages}
                 onSendMessage={sendMessage}
+                playerColor={playerColor}
               />
             </div>
 
             {gameMode === GameMode.LOCAL && !onlineRoom && (
               <div className="grid grid-cols-1 gap-2">
-                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1 active:shadow-none">
+                <button 
+                  onClick={createOnlineGame} 
+                  className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1 active:shadow-none"
+                >
                   <i className="fas fa-bolt mr-2"></i> JOGAR ONLINE
                 </button>
-                <button onClick={() => { setGameMode(GameMode.AI); setGameOver(null); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844] transition-colors">
+                <button 
+                  onClick={() => { 
+                    setGameMode(GameMode.AI); 
+                    setGameOver(null); 
+                    resetGame();
+                  }} 
+                  className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844] transition-colors"
+                >
                   CONTRA COMPUTADOR
                 </button>
               </div>
@@ -305,7 +406,12 @@ const App: React.FC = () => {
                 </button>
               </div>
               
-              <button onClick={() => window.location.reload()} className="text-gray-500 hover:text-white text-xs font-bold uppercase">Cancelar</button>
+              <button 
+                onClick={handleNewGame} 
+                className="text-gray-500 hover:text-white text-xs font-bold uppercase"
+              >
+                Cancelar
+              </button>
             </div>
           </div>
         )}
@@ -317,7 +423,10 @@ const App: React.FC = () => {
               <div className="text-6xl mb-4">🏁</div>
               <h2 className="text-2xl font-bold mb-2">Fim da Partida</h2>
               <p className="text-gray-400 mb-8">{gameOver}</p>
-              <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)]">
+              <button 
+                onClick={handleNewGame} 
+                className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1 active:shadow-none"
+              >
                 NOVA PARTIDA
               </button>
             </div>

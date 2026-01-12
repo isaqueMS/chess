@@ -4,18 +4,19 @@ import Sidebar from './components/Sidebar';
 import ChessBoard from './components/ChessBoard';
 import GameControls from './components/GameControls';
 import { Board, Move, Color, GameMode, User } from './types';
-import { createInitialBoard, makeMove, getGameState, getBestMove, isValidMove } from './services/chessLogic';
+import { createInitialBoard, makeMove, getGameState, getBestMove } from './services/chessLogic';
 import { db } from './services/firebase';
 import { DEFAULT_USER } from './constants';
 
 const App: React.FC = () => {
+  // Estado local do motor de xadrez
   const [board, setBoard] = useState<Board>(createInitialBoard());
   const [turn, setTurn] = useState<Color>('w');
   const [history, setHistory] = useState<Move[]>([]);
-  const [timers, setTimers] = useState({ w: 600, b: 600 });
   const [gameOver, setGameOver] = useState<string | null>(null);
-  const [gameMode, setGameMode] = useState<GameMode>(GameMode.LOCAL);
   
+  // Estado da sessão e interface
+  const [gameMode, setGameMode] = useState<GameMode>(GameMode.LOCAL);
   const [onlineRoom, setOnlineRoom] = useState<string | null>(null);
   const [playerColor, setPlayerColor] = useState<Color>('w');
   const [isWaiting, setIsWaiting] = useState(false);
@@ -23,9 +24,9 @@ const App: React.FC = () => {
   const [opponent, setOpponent] = useState<User | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  // Refs para controle de sincronização sem disparar re-renders excessivos
-  const historyCountRef = useRef(0);
+  // Refs cruciais para processamento matemático sem lag de estado
   const boardRef = useRef<Board>(createInitialBoard());
+  const lastProcessedMoveId = useRef<string | null>(null);
 
   const [currentUser] = useState<User>(() => ({
     ...DEFAULT_USER,
@@ -34,138 +35,90 @@ const App: React.FC = () => {
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
   }));
 
-  // Sincronização em tempo real via Firebase
+  // Função Principal: Converte lances locais em movimentos lógicos
+  const executeInternalMove = useCallback((move: Move) => {
+    const newBoard = makeMove(boardRef.current, move);
+    boardRef.current = newBoard; // Atualiza a ref matemática imediatamente
+    
+    setBoard(newBoard);
+    setHistory(prev => [...prev, move]);
+    const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
+    setTurn(nextTurn);
+
+    const state = getGameState(newBoard, nextTurn);
+    if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+    if (state === 'stalemate') setGameOver('Empate por afogamento.');
+  }, []);
+
+  // Sincronização via Firebase (Apenas Coordenadas)
   useEffect(() => {
     if (!onlineRoom) return;
 
-    const gameRef = db.ref(`rooms/${onlineRoom}`);
-    
-    // Listener para o estado da sala (Jogadores e Status)
-    gameRef.on('value', (snapshot) => {
-      const data = snapshot.val();
+    const roomRef = db.ref(`rooms/${onlineRoom}`);
+    const movesRef = roomRef.child('moves');
+
+    // 1. Escuta por novos jogadores e status
+    roomRef.on('value', (snap) => {
+      const data = snap.val();
       if (!data) return;
 
-      if (playerColor === 'w') {
-        if (data.playerB && !opponent) setOpponent(data.playerB);
-        if (data.status === 'playing' && isWaiting) setIsWaiting(false);
-      } else {
-        if (data.playerA && !opponent) setOpponent(data.playerA);
-      }
-
-      if (data.status === 'resigned') setGameOver('O oponente abandonou a partida.');
+      if (playerColor === 'w' && data.playerB && !opponent) setOpponent(data.playerB);
+      if (playerColor === 'b' && data.playerA && !opponent) setOpponent(data.playerA);
+      
+      if (data.status === 'playing' && isWaiting) setIsWaiting(false);
+      if (data.status === 'resigned') setGameOver('O oponente abandonou.');
     });
 
-    // Listener ATÔMICO para movimentos (Garante que o jogo flua)
-    const movesRef = db.ref(`rooms/${onlineRoom}/moves`);
-    movesRef.on('child_added', (snapshot) => {
-      const moveData = snapshot.val();
-      if (!moveData) return;
+    // 2. Escuta Lances por Coordenadas (O segredo do funcionamento)
+    movesRef.on('child_added', (snap) => {
+      const data = snap.val();
+      if (!data || data.id === lastProcessedMoveId.current) return;
 
-      // Só aplica se ainda não tivermos esse lance no histórico local
-      setHistory(prev => {
-        const alreadyExists = prev.some(m => 
-          m.from.row === moveData.move.from.row && 
-          m.from.col === moveData.move.from.col &&
-          m.to.row === moveData.move.to.row && 
-          m.to.col === moveData.move.to.col &&
-          m.piece.type === moveData.move.piece.type
-        );
-
-        if (!alreadyExists) {
-          const newMove = moveData.move;
-          const newBoard = makeMove(boardRef.current, newMove);
-          boardRef.current = newBoard;
-          setBoard(newBoard);
-          setTurn(moveData.nextTurn);
-          historyCountRef.current += 1;
-          
-          const state = getGameState(newBoard, moveData.nextTurn);
-          if (state === 'checkmate') setGameOver(`Fim de jogo: Xeque-mate!`);
-          return [...prev, newMove];
-        }
-        return prev;
-      });
+      lastProcessedMoveId.current = data.id;
+      
+      // Se o lance veio do oponente, processamos localmente
+      if (data.player !== currentUser.id) {
+        // O Move já vem serializado no data.move
+        executeInternalMove(data.move);
+      }
     });
 
-    // Listener para Chat
-    const chatRef = db.ref(`rooms/${onlineRoom}/messages`);
-    chatRef.on('value', (snapshot) => {
-      const msgs = snapshot.val();
-      if (msgs) {
-        setMessages(Object.values(msgs));
-      }
+    // 3. Chat
+    roomRef.child('messages').on('value', (snap) => {
+      if (snap.exists()) setMessages(Object.values(snap.val()));
     });
 
     return () => {
-      gameRef.off();
+      roomRef.off();
       movesRef.off();
-      chatRef.off();
     };
-  }, [onlineRoom, playerColor, opponent, isWaiting]);
-
-  const joinRoom = useCallback((roomId: string) => {
-    const roomRef = db.ref(`rooms/${roomId}`);
-    roomRef.once('value').then((snap) => {
-      const data = snap.val();
-      if (data && data.status === 'waiting') {
-        setOnlineRoom(roomId);
-        setGameMode(GameMode.ONLINE);
-        setPlayerColor('b');
-        setOpponent(data.playerA);
-        roomRef.update({
-          playerB: currentUser,
-          status: 'playing'
-        });
-      }
-    });
-  }, [currentUser]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    if (room) joinRoom(room);
-  }, [joinRoom]);
-
-  const executeLocalMove = (move: Move) => {
-    const newBoard = makeMove(boardRef.current, move);
-    boardRef.current = newBoard;
-    const nextTurn = turn === 'w' ? 'b' : 'w';
-    setBoard(newBoard);
-    setTurn(nextTurn);
-    setHistory(prev => [...prev, move]);
-    historyCountRef.current += 1;
-    
-    const state = getGameState(newBoard, nextTurn);
-    if (state === 'checkmate') setGameOver(`Fim de jogo: Xeque-mate!`);
-  };
+  }, [onlineRoom, playerColor, opponent, isWaiting, currentUser.id, executeInternalMove]);
 
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
-    
-    if (gameMode === GameMode.ONLINE) {
-      if (turn !== playerColor || !onlineRoom) return;
+
+    if (gameMode === GameMode.ONLINE && onlineRoom) {
+      if (turn !== playerColor) return;
+
+      // Primeiro executamos localmente para feedback instantâneo
+      executeInternalMove(move);
+
+      // Enviamos apenas os dados do lance para o relay do Firebase
+      const moveId = Math.random().toString(36).substr(2, 9);
+      lastProcessedMoveId.current = moveId;
       
-      const nextTurn = turn === 'w' ? 'b' : 'w';
-      // Enviamos apenas o lance para o Firebase, o listener child_added cuidará de atualizar o tabuleiro local
       db.ref(`rooms/${onlineRoom}/moves`).push({
-        move,
-        nextTurn,
+        id: moveId,
+        player: currentUser.id,
+        move: move,
         timestamp: Date.now()
       });
     } else {
-      executeLocalMove(move);
+      executeInternalMove(move);
     }
-  }, [turn, gameMode, playerColor, onlineRoom, gameOver]);
+  }, [gameOver, gameMode, onlineRoom, turn, playerColor, currentUser.id, executeInternalMove]);
 
-  const sendMessage = (text: string) => {
-    if (!onlineRoom) return;
-    db.ref(`rooms/${onlineRoom}/messages`).push({
-      user: currentUser.name,
-      text: text,
-      timestamp: Date.now()
-    });
-  };
-
+  // Funções de Inicialização de Sala
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 8);
     setOnlineRoom(id);
@@ -180,43 +133,69 @@ const App: React.FC = () => {
     });
   };
 
-  const handleResign = () => {
-    if (onlineRoom) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
-    setGameOver('Você abandonou a partida.');
-  };
+  const joinRoom = useCallback((roomId: string) => {
+    db.ref(`rooms/${roomId}`).once('value').then((snap) => {
+      const data = snap.val();
+      if (data && data.status === 'waiting') {
+        setOnlineRoom(roomId);
+        setGameMode(GameMode.ONLINE);
+        setPlayerColor('b');
+        setOpponent(data.playerA);
+        db.ref(`rooms/${roomId}`).update({
+          playerB: currentUser,
+          status: 'playing'
+        });
+      }
+    });
+  }, [currentUser]);
 
-  // IA move handler
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const room = params.get('room');
+    if (room) joinRoom(room);
+  }, [joinRoom]);
+
+  // IA Handler
   useEffect(() => {
     if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
-      const timeout = setTimeout(() => {
+      const timer = setTimeout(() => {
         const move = getBestMove(boardRef.current, 'b');
-        if (move) executeLocalMove(move);
-      }, 800);
-      return () => clearTimeout(timeout);
+        if (move) executeInternalMove(move);
+      }, 600);
+      return () => clearTimeout(timer);
     }
-  }, [turn, gameMode, gameOver]);
+  }, [turn, gameMode, gameOver, executeInternalMove]);
+
+  const sendMessage = (text: string) => {
+    if (!onlineRoom) return;
+    db.ref(`rooms/${onlineRoom}/messages`).push({
+      user: currentUser.name,
+      text,
+      timestamp: Date.now()
+    });
+  };
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#312e2b] text-white overflow-hidden">
       <Sidebar user={currentUser} />
       
-      <main className="flex-1 flex flex-col items-center overflow-y-auto pb-20 md:pb-0 pt-4 px-2 md:px-4">
-        <div className="flex flex-col lg:flex-row gap-4 md:gap-8 w-full max-w-6xl items-center lg:items-start lg:mt-4">
+      <main className="flex-1 flex flex-col items-center overflow-y-auto pb-20 md:pb-0 pt-4 px-2">
+        <div className="flex flex-col lg:flex-row gap-6 w-full max-w-6xl items-center lg:items-start lg:mt-4">
           
           <div className="w-full max-w-[600px] flex flex-col gap-2">
-            {/* Opponent Card */}
+            {/* Oponente */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 bg-[#262421] rounded flex items-center justify-center text-gray-500">
-                  <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'}`}></i>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#3c3a37] rounded flex items-center justify-center">
+                  <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'} text-gray-400`}></i>
                 </div>
-                <div className="flex flex-col">
-                   <span className="font-bold text-xs truncate max-w-[120px]">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish Lite' : 'Oponente')}</span>
-                   <span className="text-[10px] text-gray-500">ELO {opponent?.elo || 1200}</span>
+                <div>
+                  <div className="font-bold text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish 11' : 'Aguardando...')}</div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">ELO {opponent?.elo || 1200}</div>
                 </div>
               </div>
-              <div className={`px-3 py-1 rounded font-mono text-xl transition-all ${turn !== playerColor && !gameOver ? 'bg-white text-black shadow-lg' : 'bg-[#211f1c] text-gray-400'}`}>
-                {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
+              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn !== playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
+                10:00
               </div>
             </div>
 
@@ -228,41 +207,44 @@ const App: React.FC = () => {
               lastMove={history.length > 0 ? history[history.length - 1] : null}
             />
 
-            {/* User Card */}
+            {/* Usuário */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
-              <div className="flex items-center gap-2">
-                <img src={currentUser.avatar} className="w-8 h-8 rounded-md border border-white/10" alt="Me" />
-                <div className="flex flex-col">
-                  <span className="font-bold text-xs">{currentUser.name}</span>
-                  <span className="text-[10px] text-[#81b64c]">ELO {currentUser.elo}</span>
+              <div className="flex items-center gap-3">
+                <img src={currentUser.avatar} className="w-10 h-10 rounded-md" alt="Avatar" />
+                <div>
+                  <div className="font-bold text-sm">{currentUser.name}</div>
+                  <div className="text-[10px] text-[#81b64c] font-bold uppercase tracking-widest">ELO {currentUser.elo}</div>
                 </div>
               </div>
-              <div className={`px-3 py-1 rounded font-mono text-xl transition-all ${turn === playerColor && !gameOver ? 'bg-white text-black shadow-lg' : 'bg-[#211f1c] text-gray-400'}`}>
-                {Math.floor(timers[playerColor] / 60)}:{(timers[playerColor] % 60).toString().padStart(2, '0')}
+              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn === playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
+                10:00
               </div>
             </div>
           </div>
 
-          <div className="w-full lg:w-[360px] flex flex-col gap-4">
-            <div className="h-[400px]">
+          <div className="w-full lg:w-[380px] flex flex-col gap-4">
+            <div className="h-[450px]">
               <GameControls 
                 history={history} 
-                onUndo={() => gameMode !== GameMode.ONLINE && (boardRef.current = createInitialBoard(), setBoard(boardRef.current), setHistory([]), setTurn('w'))} 
-                onResign={handleResign} 
+                onUndo={() => {}} 
+                onResign={() => {
+                  if (onlineRoom) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
+                  setGameOver('Você desistiu.');
+                }} 
                 turn={turn}
-                whiteTimer={timers.w} blackTimer={timers.b} 
+                whiteTimer={600} blackTimer={600} 
                 gameMode={gameMode}
                 messages={messages}
                 onSendMessage={sendMessage}
               />
             </div>
-            
+
             {gameMode === GameMode.LOCAL && !onlineRoom && (
-              <div className="flex flex-col gap-2">
-                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] active:translate-y-1">
-                  JOGAR ONLINE
+              <div className="grid grid-cols-1 gap-2">
+                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-all active:translate-y-1 active:shadow-none">
+                  <i className="fas fa-bolt mr-2"></i> JOGAR ONLINE
                 </button>
-                <button onClick={() => { setGameMode(GameMode.AI); boardRef.current = createInitialBoard(); setBoard(boardRef.current); setHistory([]); setGameOver(null); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold">
+                <button onClick={() => setGameMode(GameMode.AI)} className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844] transition-colors">
                   CONTRA COMPUTADOR
                 </button>
               </div>
@@ -270,29 +252,34 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Modal Wait */}
+        {/* Modal Convite */}
         {isWaiting && (
-          <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-[100] p-4">
-            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center max-w-sm w-full shadow-2xl">
-              <div className="animate-spin text-3xl text-[#81b64c] mb-4"><i className="fas fa-circle-notch"></i></div>
-              <h2 className="text-2xl font-bold mb-4">Desafie um Amigo</h2>
-              <div className="bg-[#1a1917] p-3 rounded-xl mb-6 flex flex-col gap-3">
-                <div className="text-[10px] text-gray-500 truncate font-mono">
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center max-w-sm w-full shadow-2xl animate-in zoom-in duration-200">
+              <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i className="fas fa-user-plus text-[#81b64c] text-2xl"></i>
+              </div>
+              <h2 className="text-2xl font-bold mb-2">Desafio Criado!</h2>
+              <p className="text-gray-400 text-sm mb-6 leading-relaxed">Envie o link abaixo para um amigo. A partida começará automaticamente.</p>
+              
+              <div className="bg-[#1a1917] p-4 rounded-xl mb-6 border border-white/5">
+                <div className="text-[10px] text-[#81b64c] font-mono mb-3 truncate">
                   {window.location.origin}/?room={onlineRoom}
                 </div>
                 <button 
                   onClick={() => {
-                    const link = `${window.location.origin}/?room=${onlineRoom}`;
-                    navigator.clipboard.writeText(link);
+                    navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`);
                     setCopyFeedback(true);
                     setTimeout(() => setCopyFeedback(false), 2000);
                   }} 
-                  className={`py-3 rounded-lg font-bold text-sm ${copyFeedback ? 'bg-[#81b64c]' : 'bg-[#3c3a37]'}`}
+                  className={`w-full py-3 rounded-lg font-bold transition-all flex items-center justify-center gap-2 ${copyFeedback ? 'bg-[#81b64c]' : 'bg-[#3c3a37]'}`}
                 >
-                  {copyFeedback ? 'COPIADO!' : 'COPIAR LINK'}
+                  <i className={`fas ${copyFeedback ? 'fa-check' : 'fa-copy'}`}></i>
+                  {copyFeedback ? 'LINK COPIADO!' : 'COPIAR LINK'}
                 </button>
               </div>
-              <button onClick={() => window.location.reload()} className="text-red-500 font-bold text-xs uppercase">Cancelar</button>
+              
+              <button onClick={() => window.location.reload()} className="text-gray-500 hover:text-white text-xs font-bold uppercase">Cancelar Desafio</button>
             </div>
           </div>
         )}
@@ -300,11 +287,12 @@ const App: React.FC = () => {
         {/* Modal GameOver */}
         {gameOver && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-            <div className="bg-[#262421] p-8 rounded-2xl border border-white/10 text-center shadow-2xl max-w-xs w-full">
-              <h2 className="text-2xl font-bold mb-2">Fim de Jogo</h2>
-              <p className="text-gray-400 text-sm mb-8">{gameOver}</p>
+            <div className="bg-[#262421] p-10 rounded-2xl border border-white/10 text-center shadow-2xl max-w-sm w-full">
+              <div className="text-6xl mb-4">🏆</div>
+              <h2 className="text-2xl font-bold mb-2">Partida Finalizada</h2>
+              <p className="text-gray-400 mb-8">{gameOver}</p>
               <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)]">
-                VOLTAR AO INÍCIO
+                NOVA PARTIDA
               </button>
             </div>
           </div>

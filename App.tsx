@@ -52,34 +52,46 @@ const App: React.FC = () => {
 
   // Função de Execução de Lance (O coração do jogo)
   const applyMove = useCallback((move: Move) => {
-    // 1. Cálculo Matemático
-    const newBoard = makeMove(boardRef.current, move);
-    if (!newBoard) return; // Movimento inválido
+    try {
+      console.log('Aplicando movimento:', move);
+      
+      // 1. Cálculo Matemático
+      const newBoard = makeMove(boardRef.current, move);
+      
+      // Verificação mais robusta do retorno
+      if (!newBoard || !Array.isArray(newBoard) || newBoard.length !== 8) {
+        console.error('Movimento inválido retornou tabuleiro inválido:', newBoard);
+        return false;
+      }
+      
+      boardRef.current = newBoard;
+      historyRef.current.push(move);
 
-    boardRef.current = newBoard;
-    historyRef.current.push(move);
+      // 2. Atualização de UI (React)
+      setBoard([...newBoard]);
+      setHistory([...historyRef.current]);
+      
+      const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
+      setTurn(nextTurn);
 
-    // 2. Atualização de UI (React)
-    setBoard([...newBoard]);
-    setHistory([...historyRef.current]);
-    
-    const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
-    setTurn(nextTurn);
+      // 3. Atualizar timers (adicionar tempo após cada movimento)
+      setTimers(prev => ({
+        ...prev,
+        [move.piece.color === 'w' ? 'b' : 'w']: prev[move.piece.color === 'w' ? 'b' : 'w'] + 2 // Adiciona 2 segundos
+      }));
 
-    // 3. Atualizar timers (adicionar tempo após cada movimento)
-    setTimers(prev => ({
-      ...prev,
-      [move.piece.color === 'w' ? 'b' : 'w']: prev[move.piece.color === 'w' ? 'b' : 'w'] + 2 // Adiciona 2 segundos
-    }));
-
-    // 4. Verificação de Fim de Jogo
-    const state = getGameState(newBoard, nextTurn);
-    if (state === 'checkmate') {
-      setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
-    } else if (state === 'stalemate') {
-      setGameOver('Empate por afogamento.');
-    } else if (state === 'check') {
-      // Pode adicionar feedback visual de xeque se quiser
+      // 4. Verificação de Fim de Jogo
+      const state = getGameState(newBoard, nextTurn);
+      if (state === 'checkmate') {
+        setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+      } else if (state === 'stalemate') {
+        setGameOver('Empate por afogamento.');
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Erro ao aplicar movimento:', error);
+      return false;
     }
   }, []);
 
@@ -171,31 +183,50 @@ const App: React.FC = () => {
     };
   }, [onlineRoom, playerColor, currentUser.id, applyMove, gameMode]);
 
-  // Handler de Clique no Tabuleiro
+  // Handler de Clique no Tabuleiro - CORRIGIDO
   const handleMove = useCallback((move: Move) => {
-    if (gameOver) return;
+    console.log('HandleMove chamado com:', move);
+    
+    if (gameOver) {
+      console.log('Jogo terminado, movimento ignorado');
+      return;
+    }
     
     // Verifica se é o turno do jogador
-    if (turn !== move.piece.color) return;
+    if (turn !== move.piece.color) {
+      console.log('Não é o turno deste jogador', turn, move.piece.color);
+      return;
+    }
 
     // Se for Online, valida se é o turno do jogador
     if (gameMode === GameMode.ONLINE) {
-      if (turn !== playerColor || !onlineRoom) return;
+      if (turn !== playerColor || !onlineRoom) {
+        console.log('Não pode mover no modo online', { turn, playerColor, onlineRoom });
+        return;
+      }
       
       const ts = Date.now();
       lastMoveTimestamp.current = ts;
 
-      // Aplica Localmente (Feedback Instantâneo)
-      applyMove(move);
+      // Tenta aplicar localmente primeiro
+      const success = applyMove(move);
+      if (!success) {
+        console.error('Falha ao aplicar movimento localmente');
+        return;
+      }
 
       // Sincroniza com Firebase
+      console.log('Enviando movimento para Firebase');
       db.ref(`rooms/${onlineRoom}/moves`).push({
         move,
         playerId: currentUser.id,
         timestamp: ts
+      }).catch(error => {
+        console.error('Erro ao enviar movimento para Firebase:', error);
       });
     } else {
       // Modo Local ou AI
+      console.log('Aplicando movimento local');
       applyMove(move);
     }
   }, [gameOver, gameMode, turn, playerColor, onlineRoom, currentUser.id, applyMove]);
@@ -203,9 +234,19 @@ const App: React.FC = () => {
   // IA Handler
   useEffect(() => {
     if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
+      console.log('Turno da IA, calculando melhor movimento...');
       const timeout = setTimeout(() => {
-        const move = getBestMove(boardRef.current, 'b');
-        if (move) applyMove(move);
+        try {
+          const move = getBestMove(boardRef.current, 'b');
+          if (move) {
+            console.log('IA encontrou movimento:', move);
+            applyMove(move);
+          } else {
+            console.log('IA não encontrou movimento válido');
+          }
+        } catch (error) {
+          console.error('Erro na IA:', error);
+        }
       }, 700);
       return () => clearTimeout(timeout);
     }
@@ -275,7 +316,13 @@ const App: React.FC = () => {
     }
   }, [onlineRoom]);
 
-  const handleNewGame = useCallback(() => {
+  const handleNewGame = useCallback((e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    console.log('Iniciando nova partida...');
     if (onlineRoom) {
       // Limpar sala online
       db.ref(`rooms/${onlineRoom}`).remove();
@@ -284,9 +331,23 @@ const App: React.FC = () => {
     setGameMode(GameMode.LOCAL);
     setOpponent(null);
     setIsWaiting(false);
-    resetGame();
     setMessages([]);
+    resetGame();
   }, [onlineRoom, resetGame]);
+
+  // PREVENIR O RECARREGAMENTO DA PÁGINA
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (onlineRoom && !gameOver) {
+        e.preventDefault();
+        e.returnValue = 'Você tem uma partida em andamento. Tem certeza que deseja sair?';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [onlineRoom, gameOver]);
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#312e2b] text-white overflow-hidden">
@@ -367,7 +428,6 @@ const App: React.FC = () => {
                 <button 
                   onClick={() => { 
                     setGameMode(GameMode.AI); 
-                    setGameOver(null); 
                     resetGame();
                   }} 
                   className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844] transition-colors"
@@ -394,7 +454,9 @@ const App: React.FC = () => {
                   {window.location.origin}/?room={onlineRoom}
                 </div>
                 <button 
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`);
                     setCopyFeedback(true);
                     setTimeout(() => setCopyFeedback(false), 2000);

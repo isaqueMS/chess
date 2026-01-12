@@ -20,7 +20,6 @@ const App: React.FC = () => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
 
-  // Ref para evitar que o Firebase sobrescreva o estado enquanto o próprio usuário está movendo
   const skipNextRemoteUpdate = useRef(false);
 
   // Escuta mudanças no Firebase
@@ -31,12 +30,12 @@ const App: React.FC = () => {
     if (roomId) {
       setOnlineRoom(roomId);
       setGameMode(GameMode.ONLINE);
-      setPlayerColor('b'); // Quem entra pelo link é sempre Pretas
+      setPlayerColor('b'); 
       setIsWaiting(false);
 
       const roomRef = db.ref(`rooms/${roomId}`);
       
-      // Quando o oponente entra, ele avisa o Host
+      // Avisa que o oponente entrou
       roomRef.child('status').set('playing');
 
       roomRef.on('value', (snapshot: any) => {
@@ -48,7 +47,7 @@ const App: React.FC = () => {
           return;
         }
 
-        // Sincronizar lances e turno
+        // Sincronizar Histórico e Tabuleiro
         if (data.moves && data.moves.length !== history.length) {
           let currentBoard = createInitialBoard();
           data.moves.forEach((m: Move) => {
@@ -58,7 +57,8 @@ const App: React.FC = () => {
           setHistory(data.moves);
         }
         
-        if (data.lastTurn) {
+        // Sincronizar Turno
+        if (data.lastTurn && data.lastTurn !== turn) {
           setTurn(data.lastTurn);
         }
 
@@ -73,7 +73,7 @@ const App: React.FC = () => {
 
       return () => roomRef.off();
     }
-  }, [onlineRoom]);
+  }, [onlineRoom, history.length, turn, gameOver]);
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -85,14 +85,13 @@ const App: React.FC = () => {
     const initialData = {
       status: 'waiting',
       moves: [],
-      messages: [{ user: 'Sistema', text: 'Sala Cloud Ativa. Aguardando oponente...' }],
+      messages: [{ user: 'Sistema', text: 'Aguardando oponente entrar...' }],
       createdAt: Date.now(),
       lastTurn: 'w'
     };
 
     db.ref(`rooms/${id}`).set(initialData);
 
-    // Host fica ouvindo para saber quando o oponente entrar
     db.ref(`rooms/${id}/status`).on('value', (snapshot: any) => {
       if (snapshot.val() === 'playing') {
         setIsWaiting(false);
@@ -103,7 +102,6 @@ const App: React.FC = () => {
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
     
-    // Bloqueio de turno no modo online
     if (gameMode === GameMode.ONLINE && turn !== playerColor) {
       return;
     }
@@ -111,14 +109,13 @@ const App: React.FC = () => {
     const newBoard = makeMove(board, move);
     const nextTurn = turn === 'w' ? 'b' : 'w';
     
-    // Atualização Local Imediata (Experiência do Usuário)
     setBoard(newBoard);
     const newHistory = [...history, move];
     setHistory(newHistory);
     setTurn(nextTurn);
 
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      skipNextRemoteUpdate.current = true; // Não processe o eco do Firebase deste lance
+      skipNextRemoteUpdate.current = true;
       db.ref(`rooms/${onlineRoom}`).update({
         moves: newHistory,
         lastTurn: nextTurn,
@@ -151,14 +148,14 @@ const App: React.FC = () => {
 
   const handleSendMessage = (text: string) => {
     const msg = { user: playerColor === 'w' ? 'Brancas' : 'Pretas', text };
-    const newMessages = [...messages, msg];
+    const currentMessages = messages || [];
+    const newMessages = [...currentMessages, msg];
     setMessages(newMessages);
     if (gameMode === GameMode.ONLINE && onlineRoom) {
       db.ref(`rooms/${onlineRoom}`).update({ messages: newMessages });
     }
   };
 
-  // Lógica de Timers
   useEffect(() => {
     if (gameOver || isWaiting) return;
     const interval = setInterval(() => {
@@ -183,7 +180,7 @@ const App: React.FC = () => {
             <div className="flex items-center space-x-3 text-white">
               <div className={`w-2.5 h-2.5 rounded-full ${gameMode === GameMode.ONLINE ? 'bg-[#81b64c] shadow-[0_0_8px_#81b64c] animate-pulse' : 'bg-gray-500'}`}></div>
               <span className="font-bold text-gray-400 text-[10px] uppercase tracking-widest">
-                {gameMode === GameMode.ONLINE ? `CONECTADO: VOCÊ É ${playerColor === 'w' ? 'BRANCAS' : 'PRETAS'}` : 'MODO LOCAL'}
+                {gameMode === GameMode.ONLINE ? `JOGANDO COMO ${playerColor === 'w' ? 'BRANCAS' : 'PRETAS'}` : 'MODO LOCAL'}
               </span>
             </div>
             {!onlineRoom && (
@@ -191,7 +188,7 @@ const App: React.FC = () => {
                 onClick={createOnlineGame} 
                 className="bg-[#81b64c] hover:bg-[#95c562] px-5 py-2 rounded-lg text-xs font-bold text-white shadow-[0_3px_0_rgb(69,101,40)] active:translate-y-[1px] active:shadow-none transition-all"
               >
-                Nova Partida Online
+                Criar Partida Online
               </button>
             )}
           </div>
@@ -210,7 +207,7 @@ const App: React.FC = () => {
                   <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4">
                     <i className="fas fa-link text-[#81b64c] text-2xl"></i>
                   </div>
-                  <h3 className="text-xl font-bold text-white">Aguardando Oponente</h3>
+                  <h3 className="text-xl font-bold text-white">Convidar Amigo</h3>
                 </div>
                 <div className="bg-[#1a1917] p-3 rounded-lg border border-[#3c3a37] mb-6">
                   <div className="flex items-center">
@@ -227,9 +224,9 @@ const App: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <p className="text-gray-500 text-xs mb-8">A partida começará assim que seu amigo abrir este link.</p>
-                <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline font-bold">
-                  CANCELAR SALA
+                <p className="text-gray-500 text-xs mb-8">Copie o link acima e envie para seu oponente.</p>
+                <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline font-bold uppercase tracking-wider">
+                  Cancelar
                 </button>
               </div>
             </div>

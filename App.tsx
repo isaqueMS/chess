@@ -9,8 +9,12 @@ import { db } from './services/firebase';
 import { DEFAULT_USER } from './constants';
 
 const App: React.FC = () => {
-  // Estado Visual e de Controle
-  const [board, setBoard] = useState<Board>(createInitialBoard());
+  // O "Estado Mestre" é mantido em Refs para evitar ciclos de renderização do React resetando o jogo
+  const boardRef = useRef<Board>(createInitialBoard());
+  const historyRef = useRef<Move[]>([]);
+  
+  // Estados de Interface
+  const [board, setBoard] = useState<Board>(boardRef.current);
   const [turn, setTurn] = useState<Color>('w');
   const [history, setHistory] = useState<Move[]>([]);
   const [gameOver, setGameOver] = useState<string | null>(null);
@@ -24,10 +28,8 @@ const App: React.FC = () => {
   const [opponent, setOpponent] = useState<User | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  // Refs de Processamento (Não disparam re-render, mantêm a lógica viva)
-  const boardRef = useRef<Board>(createInitialBoard());
-  const lastProcessedMoveId = useRef<string | null>(null);
-  const timerIntervalRef = useRef<number | null>(null);
+  // Controle de Sincronização
+  const lastMoveTimestamp = useRef<number>(0);
 
   const [currentUser] = useState<User>(() => ({
     ...DEFAULT_USER,
@@ -36,109 +38,123 @@ const App: React.FC = () => {
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
   }));
 
-  // Lógica do Cronômetro
-  useEffect(() => {
-    if (gameOver || isWaiting) {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      return;
-    }
-
-    timerIntervalRef.current = window.setInterval(() => {
-      setTimers(prev => {
-        const newTime = prev[turn] - 1;
-        if (newTime <= 0) {
-          setGameOver(`Tempo esgotado! Vitória das ${turn === 'w' ? 'Pretas' : 'Brancas'}`);
-          clearInterval(timerIntervalRef.current!);
-          return { ...prev, [turn]: 0 };
-        }
-        return { ...prev, [turn]: newTime };
-      });
-    }, 1000);
-
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
-  }, [turn, gameOver, isWaiting]);
-
-  // Função de Execução Matemática do Lance
-  const executeInternalMove = useCallback((move: Move) => {
+  // Função de Execução de Lance (O coração do jogo)
+  const applyMove = useCallback((move: Move) => {
+    // 1. Cálculo Matemático
     const newBoard = makeMove(boardRef.current, move);
     boardRef.current = newBoard;
+    historyRef.current.push(move);
+
+    // 2. Atualização de UI (React)
+    setBoard([...newBoard]);
+    setHistory([...historyRef.current]);
     
-    setBoard(newBoard);
-    setHistory(prev => [...prev, move]);
     const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
     setTurn(nextTurn);
 
+    // 3. Verificação de Fim de Jogo
     const state = getGameState(newBoard, nextTurn);
     if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
     if (state === 'stalemate') setGameOver('Empate por afogamento.');
   }, []);
 
-  // Sincronização Firebase
+  // Loop do Cronômetro
+  useEffect(() => {
+    if (gameOver || isWaiting || gameMode === GameMode.LOCAL) return;
+
+    const interval = setInterval(() => {
+      setTimers(prev => {
+        const currentVal = prev[turn];
+        if (currentVal <= 0) {
+          setGameOver(`Tempo esgotado! Vitória das ${turn === 'w' ? 'Pretas' : 'Brancas'}`);
+          clearInterval(interval);
+          return prev;
+        }
+        return { ...prev, [turn]: currentVal - 1 };
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [turn, gameOver, isWaiting, gameMode]);
+
+  // Listener do Firebase (Apenas recebe lances de terceiros)
   useEffect(() => {
     if (!onlineRoom) return;
 
     const roomRef = db.ref(`rooms/${onlineRoom}`);
-    const movesRef = roomRef.child('moves');
-
+    
+    // Escuta Metadados da Sala
     roomRef.on('value', (snap) => {
       const data = snap.val();
       if (!data) return;
-
-      if (playerColor === 'w' && data.playerB && !opponent) setOpponent(data.playerB);
-      if (playerColor === 'b' && data.playerA && !opponent) setOpponent(data.playerA);
-      if (data.status === 'playing' && isWaiting) setIsWaiting(false);
-      if (data.status === 'resigned') setGameOver('O oponente abandonou a partida.');
+      if (playerColor === 'w' && data.playerB) setOpponent(data.playerB);
+      if (playerColor === 'b' && data.playerA) setOpponent(data.playerA);
+      if (data.status === 'playing') setIsWaiting(false);
+      if (data.status === 'resigned') setGameOver('O oponente desistiu.');
     });
 
+    // Escuta Lances (O segredo: child_added garante que processamos um por um)
+    const movesRef = roomRef.child('moves');
     movesRef.on('child_added', (snap) => {
       const data = snap.val();
-      if (!data || data.id === lastProcessedMoveId.current) return;
+      if (!data) return;
 
-      lastProcessedMoveId.current = data.id;
-      if (data.player !== currentUser.id) {
-        executeInternalMove(data.move);
+      // Se o lance foi feito por outra pessoa e é mais novo que o último que processamos
+      if (data.playerId !== currentUser.id && data.timestamp > lastMoveTimestamp.current) {
+        lastMoveTimestamp.current = data.timestamp;
+        applyMove(data.move);
       }
     });
 
+    // Chat
     roomRef.child('messages').on('value', (snap) => {
-      if (snap.exists()) {
-        const msgs = Object.values(snap.val()) as any[];
-        setMessages(msgs.sort((a, b) => a.timestamp - b.timestamp));
-      }
+      if (snap.exists()) setMessages(Object.values(snap.val()));
     });
 
     return () => {
       roomRef.off();
       movesRef.off();
     };
-  }, [onlineRoom, playerColor, opponent, isWaiting, currentUser.id, executeInternalMove]);
+  }, [onlineRoom, playerColor, currentUser.id, applyMove]);
 
+  // Handler de Clique no Tabuleiro
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
 
-    if (gameMode === GameMode.ONLINE && onlineRoom) {
-      if (turn !== playerColor) return;
-
-      const moveId = Math.random().toString(36).substr(2, 9);
-      lastProcessedMoveId.current = moveId;
+    // Se for Online, valida se é o turno do jogador
+    if (gameMode === GameMode.ONLINE) {
+      if (turn !== playerColor || !onlineRoom) return;
       
-      // Executa localmente primeiro
-      executeInternalMove(move);
+      const ts = Date.now();
+      lastMoveTimestamp.current = ts;
 
-      // Sincroniza
+      // Aplica Localmente (Feedback Instantâneo)
+      applyMove(move);
+
+      // Sincroniza Coordenadas
       db.ref(`rooms/${onlineRoom}/moves`).push({
-        id: moveId,
-        player: currentUser.id,
-        move: move,
-        timestamp: Date.now()
+        move,
+        playerId: currentUser.id,
+        timestamp: ts
       });
     } else {
-      executeInternalMove(move);
+      // Modo Local ou AI
+      applyMove(move);
     }
-  }, [gameOver, gameMode, onlineRoom, turn, playerColor, currentUser.id, executeInternalMove]);
+  }, [gameOver, gameMode, turn, playerColor, onlineRoom, currentUser.id, applyMove]);
 
+  // IA Handler
+  useEffect(() => {
+    if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
+      const timeout = setTimeout(() => {
+        const move = getBestMove(boardRef.current, 'b');
+        if (move) applyMove(move);
+      }, 700);
+      return () => clearTimeout(timeout);
+    }
+  }, [turn, gameMode, gameOver, applyMove]);
+
+  // Funções de Gerenciamento de Sala
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 8);
     setOnlineRoom(id);
@@ -175,24 +191,14 @@ const App: React.FC = () => {
     if (room) joinRoom(room);
   }, [joinRoom]);
 
-  // IA Handler
-  useEffect(() => {
-    if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
-      const timer = setTimeout(() => {
-        const move = getBestMove(boardRef.current, 'b');
-        if (move) executeInternalMove(move);
-      }, 600);
-      return () => clearTimeout(timer);
-    }
-  }, [turn, gameMode, gameOver, executeInternalMove]);
-
   const sendMessage = (text: string) => {
-    if (!onlineRoom) return;
-    db.ref(`rooms/${onlineRoom}/messages`).push({
-      user: currentUser.name,
-      text,
-      timestamp: Date.now()
-    });
+    if (onlineRoom) {
+      db.ref(`rooms/${onlineRoom}/messages`).push({
+        user: currentUser.name,
+        text,
+        timestamp: Date.now()
+      });
+    }
   };
 
   return (
@@ -210,7 +216,7 @@ const App: React.FC = () => {
                   <i className={`fas ${gameMode === GameMode.AI ? 'fa-robot' : 'fa-user'} text-gray-400`}></i>
                 </div>
                 <div>
-                  <div className="font-bold text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish 11' : 'Aguardando...')}</div>
+                  <div className="font-bold text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish 11' : 'Oponente')}</div>
                   <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">ELO {opponent?.elo || 1200}</div>
                 </div>
               </div>

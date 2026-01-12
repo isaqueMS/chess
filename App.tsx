@@ -21,6 +21,12 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
 
   const skipNextRemoteUpdate = useRef(false);
+  const historyRef = useRef<Move[]>([]);
+
+  // Sincroniza a Ref com o estado para acesso em callbacks
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
 
   // Escuta mudanças no Firebase
   useEffect(() => {
@@ -35,10 +41,10 @@ const App: React.FC = () => {
 
       const roomRef = db.ref(`rooms/${roomId}`);
       
-      // Avisa que o oponente entrou
-      roomRef.child('status').set('playing');
+      // Avisa que o oponente entrou (Pretas)
+      roomRef.update({ status: 'playing' });
 
-      roomRef.on('value', (snapshot: any) => {
+      const handleData = (snapshot: any) => {
         const data = snapshot.val();
         if (!data) return;
 
@@ -47,19 +53,18 @@ const App: React.FC = () => {
           return;
         }
 
-        // Sincronizar Histórico e Tabuleiro
-        if (data.moves && data.moves.length !== history.length) {
+        // Sincronizar Histórico e Tabuleiro apenas se houver lances novos
+        if (data.moves && data.moves.length !== historyRef.current.length) {
           let currentBoard = createInitialBoard();
           data.moves.forEach((m: Move) => {
             currentBoard = makeMove(currentBoard, m);
           });
           setBoard(currentBoard);
           setHistory(data.moves);
-        }
-        
-        // Sincronizar Turno
-        if (data.lastTurn && data.lastTurn !== turn) {
-          setTurn(data.lastTurn);
+          
+          if (data.lastTurn) {
+            setTurn(data.lastTurn);
+          }
         }
 
         if (data.messages) {
@@ -69,11 +74,12 @@ const App: React.FC = () => {
         if (data.status === 'resigned' && !gameOver) {
           setGameOver('O oponente desistiu da partida.');
         }
-      });
+      };
 
-      return () => roomRef.off();
+      roomRef.on('value', handleData);
+      return () => roomRef.off('value', handleData);
     }
-  }, [onlineRoom, history.length, turn, gameOver]);
+  }, [onlineRoom]); // Removidas dependências instáveis que causavam re-subscrição
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -85,35 +91,41 @@ const App: React.FC = () => {
     const initialData = {
       status: 'waiting',
       moves: [],
-      messages: [{ user: 'Sistema', text: 'Aguardando oponente entrar...' }],
+      messages: [{ user: 'Sistema', text: 'Convide um amigo para começar.' }],
       createdAt: Date.now(),
       lastTurn: 'w'
     };
 
     db.ref(`rooms/${id}`).set(initialData);
 
-    db.ref(`rooms/${id}/status`).on('value', (snapshot: any) => {
+    const statusRef = db.ref(`rooms/${id}/status`);
+    const handleStatus = (snapshot: any) => {
       if (snapshot.val() === 'playing') {
         setIsWaiting(false);
+        statusRef.off();
       }
-    });
+    };
+    statusRef.on('value', handleStatus);
   };
 
   const handleMove = useCallback((move: Move) => {
     if (gameOver) return;
     
+    // Bloqueio de turno no modo online
     if (gameMode === GameMode.ONLINE && turn !== playerColor) {
       return;
     }
 
     const newBoard = makeMove(board, move);
     const nextTurn = turn === 'w' ? 'b' : 'w';
-    
-    setBoard(newBoard);
     const newHistory = [...history, move];
+    
+    // Atualização Local
+    setBoard(newBoard);
     setHistory(newHistory);
     setTurn(nextTurn);
 
+    // Atualização Remota
     if (gameMode === GameMode.ONLINE && onlineRoom) {
       skipNextRemoteUpdate.current = true;
       db.ref(`rooms/${onlineRoom}`).update({
@@ -148,8 +160,7 @@ const App: React.FC = () => {
 
   const handleSendMessage = (text: string) => {
     const msg = { user: playerColor === 'w' ? 'Brancas' : 'Pretas', text };
-    const currentMessages = messages || [];
-    const newMessages = [...currentMessages, msg];
+    const newMessages = [...(messages || []), msg];
     setMessages(newMessages);
     if (gameMode === GameMode.ONLINE && onlineRoom) {
       db.ref(`rooms/${onlineRoom}`).update({ messages: newMessages });
@@ -224,7 +235,6 @@ const App: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <p className="text-gray-500 text-xs mb-8">Copie o link acima e envie para seu oponente.</p>
                 <button onClick={() => window.location.href = '/'} className="text-red-400 text-xs hover:underline font-bold uppercase tracking-wider">
                   Cancelar
                 </button>

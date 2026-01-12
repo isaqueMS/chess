@@ -21,6 +21,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
 
     const piece = board[r][c];
 
+    // Se já houver algo selecionado
     if (selected) {
       if (selected.row === r && selected.col === c) {
         setSelected(null);
@@ -29,12 +30,14 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
 
       const selectedPiece = board[selected.row][selected.col];
       
+      // Se clicar em outra peça da mesma cor, troca a seleção
       if (piece && piece.color === turn) {
         setSelected({ row: r, col: c });
         return;
       }
 
-      if (selectedPiece && selectedPiece.color === turn) {
+      // Tenta realizar o movimento
+      if (selectedPiece) {
         const move: Move = {
           from: selected,
           to: { row: r, col: c },
@@ -43,7 +46,6 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
         };
 
         if (isValidMove(board, move)) {
-          // Checa promoção
           const isPromotion = selectedPiece.type === 'p' && (r === 0 || r === 7);
           if (isPromotion) {
             setPromotionPending(move);
@@ -56,6 +58,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
       }
     }
 
+    // Seleciona se for a vez da cor certa
     if (piece && piece.color === turn) {
       setSelected({ row: r, col: c });
     }
@@ -87,45 +90,33 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
               (lastMove.to.row === r && lastMove.to.col === c)
             );
             const isKingInCheck = kingInCheck?.row === r && kingInCheck?.col === c;
-            
-            const isMoveHint = selected && !piece && isValidMove(board, { 
-              from: selected, to: { row: r, col: c }, piece: board[selected.row][selected.col]! 
-            });
-            const isCaptureHint = selected && piece && piece.color !== turn && isValidMove(board, { 
-              from: selected, to: { row: r, col: c }, piece: board[selected.row][selected.col]! 
-            });
 
             return (
               <div 
                 key={`${r}-${c}`}
                 onClick={() => handleSquareClick(r, c)}
-                className={`relative flex items-center justify-center cursor-pointer transition-colors duration-150
+                className={`relative flex items-center justify-center cursor-pointer
                   ${isLight ? 'square-light' : 'square-dark'}
-                  ${isSelected ? 'bg-[#f6f669cc] !important' : ''}
-                  ${isLastMove ? 'bg-[#f6f66988]' : ''}
+                  ${isSelected ? 'bg-[#f6f669aa]' : ''}
+                  ${isLastMove ? 'after:absolute after:inset-0 after:bg-yellow-400/30' : ''}
                 `}
               >
-                {(isFlipped ? c === 7 : c === 0) && (
-                  <span className={`absolute top-0.5 left-1 text-[10px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>
-                    {8 - r}
-                  </span>
-                )}
-                {(isFlipped ? r === 0 : r === 7) && (
-                  <span className={`absolute bottom-0.5 right-1 text-[10px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>
-                    {String.fromCharCode(97 + c)}
-                  </span>
-                )}
+                {/* Coordenadas */}
+                {c === (isFlipped ? 7 : 0) && <span className={`absolute top-0.5 left-0.5 text-[9px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>{8-r}</span>}
+                {r === (isFlipped ? 0 : 7) && <span className={`absolute bottom-0.5 right-0.5 text-[9px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>{String.fromCharCode(97+c)}</span>}
 
                 {piece && (
                   <img 
                     src={PIECE_IMAGES[`${piece.color}-${piece.type}`]} 
-                    className={`w-[90%] h-[90%] z-10 piece-shadow ${isKingInCheck ? 'bg-red-500/60 rounded-full' : ''}`}
+                    className={`w-[92%] h-[92%] z-10 piece-shadow ${isKingInCheck ? 'bg-red-500/50 rounded-full' : ''}`}
                     draggable={false}
                   />
                 )}
-
-                {isMoveHint && <div className="w-4 h-4 rounded-full bg-black/10 z-0"></div>}
-                {isCaptureHint && <div className="absolute inset-0 border-[6px] border-black/5 rounded-full scale-[0.85]"></div>}
+                
+                {/* Hint de movimento */}
+                {selected && !piece && isValidMove(board, { from: selected, to: {row:r, col:c}, piece: board[selected.row][selected.col]! }) && (
+                  <div className="w-3 h-3 rounded-full bg-black/10 z-0"></div>
+                )}
               </div>
             );
           })
@@ -133,13 +124,13 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
       </div>
 
       {promotionPending && (
-        <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center">
-          <div className="bg-white p-4 rounded-lg shadow-2xl flex gap-4">
+        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center">
+          <div className="bg-white p-4 rounded-xl shadow-2xl flex gap-4 animate-in zoom-in duration-200">
             {['q', 'r', 'b', 'n'].map((type) => (
               <button 
                 key={type} 
                 onClick={() => completePromotion(type as PieceType)}
-                className="hover:bg-gray-100 p-2 rounded transition-all"
+                className="hover:bg-gray-200 p-2 rounded-lg transition-colors"
               >
                 <img src={PIECE_IMAGES[`${promotionPending.piece.color}-${type}`]} className="w-16 h-16" />
               </button>

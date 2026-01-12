@@ -9,6 +9,7 @@ import { db } from './services/firebase';
 import { DEFAULT_USER } from './constants';
 
 const App: React.FC = () => {
+  // Estado local do jogo
   const [board, setBoard] = useState<Board>(createInitialBoard());
   const [turn, setTurn] = useState<Color>('w');
   const [history, setHistory] = useState<Move[]>([]);
@@ -16,43 +17,83 @@ const App: React.FC = () => {
   const [gameOver, setGameOver] = useState<string | null>(null);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.LOCAL);
   
+  // Estados de rede
   const [onlineRoom, setOnlineRoom] = useState<string | null>(null);
   const [playerColor, setPlayerColor] = useState<Color>('w');
   const [isWaiting, setIsWaiting] = useState(false);
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
   const [opponent, setOpponent] = useState<User | null>(null);
 
-  const lastProcessedMoveIndex = useRef(-1);
+  // Refs críticas para evitar loops de rede e fechamentos inesperados
+  const historyRef = useRef<Move[]>([]);
+  const boardRef = useRef<Board>(createInitialBoard());
+  const lastProcessedIdx = useRef(-1);
 
-  const [currentUser] = useState<User>({
+  // Perfil de usuário único para esta sessão
+  const [currentUser] = useState<User>(() => ({
     ...DEFAULT_USER,
-    id: `user_${Math.floor(Math.random() * 1000)}`,
-    name: `Jogador_${Math.floor(Math.random() * 9000) + 1000}`,
-    elo: 1200 + Math.floor(Math.random() * 200)
-  });
+    id: `user_${Math.random().toString(36).substr(2, 9)}`,
+    name: `Player_${Math.floor(Math.random() * 9000) + 1000}`,
+    elo: 1200 + Math.floor(Math.random() * 200),
+    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
+  }));
 
+  // Sincroniza refs com estado
   useEffect(() => {
-    db.ref(`users/${currentUser.id}`).set(currentUser);
-  }, [currentUser]);
+    historyRef.current = history;
+    boardRef.current = board;
+  }, [history, board]);
 
+  // Detector de entrada via link (Oponente entrando)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomId = params.get('room');
-    if (roomId) joinRoom(roomId);
+    if (roomId) {
+      joinRoom(roomId);
+    }
   }, []);
 
-  const joinRoom = async (roomId: string) => {
-    setOnlineRoom(roomId);
-    setGameMode(GameMode.ONLINE);
-    setPlayerColor('b');
-    setIsWaiting(false);
-
+  const setupGameListeners = (roomId: string) => {
     const roomRef = db.ref(`rooms/${roomId}`);
-    roomRef.child('playerB').set(currentUser);
-    roomRef.child('status').set('playing');
-    roomRef.child('playerA').on('value', (snap) => setOpponent(snap.val()));
+    
+    // Escuta lances individualmente para evitar carregar o histórico todo toda vez
+    roomRef.child('moves').on('child_added', (snapshot) => {
+      const data = snapshot.val();
+      const moveIdx = parseInt(snapshot.key || "0");
 
-    setupGameListeners(roomId);
+      if (moveIdx > lastProcessedIdx.current) {
+        lastProcessedIdx.current = moveIdx;
+        
+        // Aplica o movimento remotamente
+        const move: Move = data.move;
+        const nextBoard = makeMove(boardRef.current, move);
+        const nextTurn = data.nextTurn;
+
+        setBoard(nextBoard);
+        setTurn(nextTurn);
+        setHistory(prev => {
+          // Só adiciona se o lance ainda não existir localmente para evitar duplicatas
+          if (prev.length <= moveIdx) return [...prev, move];
+          return prev;
+        });
+
+        const state = getGameState(nextBoard, nextTurn);
+        if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+      }
+    });
+
+    // Escuta mensagens
+    roomRef.child('messages').on('child_added', (snap) => {
+      const msg = snap.val();
+      setMessages(prev => [...prev, msg]);
+    });
+
+    // Escuta status da partida
+    roomRef.child('status').on('value', (snap) => {
+      if (snap.val() === 'resigned' && !gameOver) {
+        setGameOver('O oponente abandonou a partida.');
+      }
+    });
   };
 
   const createOnlineGame = () => {
@@ -67,13 +108,14 @@ const App: React.FC = () => {
       id,
       status: 'waiting',
       playerA: currentUser,
-      lastTurn: 'w',
       createdAt: Date.now()
     });
 
+    // Detecta quando player B entra
     roomRef.child('playerB').on('value', (snap) => {
-      if (snap.val()) {
-        setOpponent(snap.val());
+      const data = snap.val();
+      if (data) {
+        setOpponent(data);
         setIsWaiting(false);
       }
     });
@@ -81,72 +123,52 @@ const App: React.FC = () => {
     setupGameListeners(id);
   };
 
-  const setupGameListeners = (roomId: string) => {
-    const movesRef = db.ref(`rooms/${roomId}/moves`);
+  const joinRoom = (roomId: string) => {
+    setOnlineRoom(roomId);
+    setGameMode(GameMode.ONLINE);
+    setPlayerColor('b');
+    setIsWaiting(false);
+
+    const roomRef = db.ref(`rooms/${roomId}`);
     
-    movesRef.on('child_added', (snapshot) => {
-      const moveData = snapshot.val();
-      const moveIndex = parseInt(snapshot.key || "0");
-
-      if (moveIndex > lastProcessedMoveIndex.current) {
-        setBoard(prevBoard => {
-          const updatedBoard = makeMove(prevBoard, moveData.move);
-          const nextTurn = moveData.nextTurn;
-          
-          const gameState = getGameState(updatedBoard, nextTurn);
-          if (gameState === 'checkmate') {
-            setGameOver(`Xeque-mate! Vitória das ${moveData.move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
-          }
-          return updatedBoard;
-        });
-
-        setHistory(prev => {
-          if (prev.length <= moveIndex) {
-             return [...prev, moveData.move];
-          }
-          return prev;
-        });
-        setTurn(moveData.nextTurn);
-        lastProcessedMoveIndex.current = moveIndex;
-      }
+    // Registra-se como oponente
+    roomRef.child('playerB').set(currentUser);
+    roomRef.child('status').set('playing');
+    
+    // Pega dados do Host
+    roomRef.child('playerA').once('value', (snap) => {
+      setOpponent(snap.val());
     });
 
-    db.ref(`rooms/${roomId}/messages`).on('value', (snap) => {
-      if (snap.val()) setMessages(Object.values(snap.val()));
-    });
-
-    db.ref(`rooms/${roomId}/status`).on('value', (snap) => {
-      if (snap.val() === 'resigned' && !gameOver) {
-        setGameOver('O oponente abandonou a partida.');
-      }
-    });
+    setupGameListeners(roomId);
   };
 
   const handleMove = useCallback((move: Move) => {
-    if (gameOver || isWaiting) return;
+    if (gameOver) return;
     if (gameMode === GameMode.ONLINE && turn !== playerColor) return;
 
-    // Movimento Local Imediato (Optimistic)
+    // 1. Aplica localmente primeiro (Resposta instantânea)
     const newBoard = makeMove(board, move);
     const nextTurn = turn === 'w' ? 'b' : 'w';
     
-    setBoard(newBoard);
-    setHistory(prev => [...prev, move]);
-    setTurn(nextTurn);
-
+    // 2. Se for online, envia para o Firebase
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      const nextIdx = history.length;
-      db.ref(`rooms/${onlineRoom}/moves/${nextIdx}`).set({
+      const moveIdx = history.length;
+      db.ref(`rooms/${onlineRoom}/moves/${moveIdx}`).set({
         move,
-        nextTurn: nextTurn,
-        timestamp: Date.now()
+        nextTurn,
+        senderId: currentUser.id
       });
     } else {
+      // No modo local, atualiza o estado manualmente
+      setBoard(newBoard);
+      setHistory(prev => [...prev, move]);
+      setTurn(nextTurn);
+      
       const state = getGameState(newBoard, nextTurn);
-      if (state === 'checkmate') setGameOver(`Xeque-mate! Vitória das ${turn === 'w' ? 'Brancas' : 'Pretas'}`);
-      if (state === 'stalemate') setGameOver(`Empate por afogamento.`);
+      if (state === 'checkmate') setGameOver('Xeque-mate!');
     }
-  }, [gameOver, turn, gameMode, playerColor, board, history, onlineRoom, isWaiting]);
+  }, [board, turn, gameMode, playerColor, onlineRoom, history, gameOver, currentUser.id]);
 
   const handleSendMessage = (text: string) => {
     if (!onlineRoom) return;
@@ -162,99 +184,123 @@ const App: React.FC = () => {
     setGameOver('Você abandonou a partida.');
   };
 
+  // Cronômetros (Apenas para feedback visual)
+  useEffect(() => {
+    if (gameOver || isWaiting) return;
+    const interval = setInterval(() => {
+      setTimers(prev => ({
+        ...prev,
+        [turn]: Math.max(0, prev[turn] - 1)
+      }));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [turn, gameOver, isWaiting]);
+
   return (
     <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#312e2b]">
       <Sidebar user={currentUser} />
       
-      <main className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-4 lg:p-8 space-y-6 lg:space-y-0 lg:flex-row lg:space-x-8">
-        <div className="flex flex-col items-center w-full max-w-[600px]">
-          {/* Oponente */}
-          <div className="w-full flex justify-between items-center mb-4 bg-[#262421] p-3 rounded-lg border border-white/5">
-            <div className="flex items-center space-x-3">
-              <img src={opponent?.avatar || 'https://picsum.photos/seed/enemy/40'} className="w-8 h-8 rounded" />
-              <div>
-                <div className="text-sm font-bold text-white leading-none">{opponent?.name || (gameMode === GameMode.ONLINE ? 'Aguardando...' : 'Oponente Local')}</div>
-                <div className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">ELO {opponent?.elo || '1500'}</div>
+      <main className="flex-1 overflow-hidden flex flex-col items-center justify-center p-4 lg:p-8">
+        <div className="flex flex-col lg:flex-row items-start justify-center gap-8 w-full max-w-7xl">
+          
+          <div className="flex flex-col items-center w-full max-w-[600px]">
+            {/* Top Player Info (Oponente) */}
+            <div className="w-full flex justify-between items-center mb-2 bg-[#262421] p-3 rounded border border-white/5">
+              <div className="flex items-center space-x-3">
+                <img src={opponent?.avatar || 'https://api.dicebear.com/7.x/bottts/svg?seed=robot'} className="w-10 h-10 rounded bg-[#3c3a37]" />
+                <div>
+                  <div className="text-sm font-bold text-white leading-none">{opponent?.name || (gameMode === GameMode.ONLINE ? 'Aguardando...' : 'Oponente')}</div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase mt-1">ELO {opponent?.elo || '1500'}</div>
+                </div>
+              </div>
+              <div className={`px-4 py-1.5 rounded font-mono text-2xl font-bold ${turn !== playerColor ? 'bg-white text-black' : 'bg-[#1a1917] text-gray-500'}`}>
+                {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
               </div>
             </div>
-            <div className={`px-3 py-1 rounded font-mono text-xl ${turn === (playerColor === 'w' ? 'b' : 'w') ? 'bg-[#81b64c] text-white' : 'bg-[#1a1917] text-gray-400'}`}>
-               {Math.floor((playerColor === 'w' ? timers.b : timers.w) / 60)}:{( (playerColor === 'w' ? timers.b : timers.w) % 60).toString().padStart(2, '0')}
+
+            <ChessBoard 
+              board={board} 
+              onMove={handleMove} 
+              turn={turn} 
+              isFlipped={playerColor === 'b'} 
+            />
+
+            {/* Bottom Player Info (Você) */}
+            <div className="w-full flex justify-between items-center mt-2 bg-[#262421] p-3 rounded border border-white/5">
+              <div className="flex items-center space-x-3">
+                <img src={currentUser.avatar} className="w-10 h-10 rounded bg-[#3c3a37]" />
+                <div>
+                  <div className="text-sm font-bold text-white leading-none">{currentUser.name} <span className="text-[#81b64c] ml-1">(Você)</span></div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase mt-1">ELO {currentUser.elo}</div>
+                </div>
+              </div>
+              <div className={`px-4 py-1.5 rounded font-mono text-2xl font-bold ${turn === playerColor ? 'bg-white text-black' : 'bg-[#1a1917] text-gray-500'}`}>
+                {Math.floor(timers[playerColor] / 60)}:{(timers[playerColor] % 60).toString().padStart(2, '0')}
+              </div>
             </div>
           </div>
 
-          <ChessBoard 
-            board={board} 
-            onMove={handleMove} 
-            turn={turn} 
-            isFlipped={playerColor === 'b'} 
-          />
-
-          {/* Você */}
-          <div className="w-full flex justify-between items-center mt-4 bg-[#262421] p-3 rounded-lg border border-white/5">
-            <div className="flex items-center space-x-3">
-              <img src={currentUser.avatar} className="w-8 h-8 rounded" />
-              <div>
-                <div className="text-sm font-bold text-white leading-none">{currentUser.name} (Você)</div>
-                <div className="text-[10px] text-[#81b64c] font-bold uppercase tracking-tighter">ELO {currentUser.elo}</div>
-              </div>
-            </div>
-            <div className={`px-3 py-1 rounded font-mono text-xl ${turn === playerColor ? 'bg-[#81b64c] text-white' : 'bg-[#1a1917] text-gray-400'}`}>
-              {Math.floor((playerColor === 'w' ? timers.w : timers.b) / 60)}:{( (playerColor === 'w' ? timers.w : timers.b) % 60).toString().padStart(2, '0')}
-            </div>
+          <div className="w-full lg:w-[400px] h-[640px]">
+            <GameControls 
+              history={history} 
+              onUndo={() => {}} 
+              onResign={handleResign}
+              turn={turn}
+              whiteTimer={timers.w}
+              blackTimer={timers.b}
+              gameMode={gameMode}
+              messages={messages}
+              onSendMessage={handleSendMessage}
+            />
+            {!onlineRoom && (
+              <button 
+                onClick={createOnlineGame} 
+                className="w-full mt-4 bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)] active:shadow-none active:translate-y-1 transition-all flex items-center justify-center gap-2"
+              >
+                <i className="fas fa-play"></i> JOGAR ONLINE
+              </button>
+            )}
           </div>
-        </div>
-
-        <div className="w-full lg:w-[380px] h-[600px] flex flex-col">
-          <GameControls 
-            history={history} 
-            onUndo={() => {}} 
-            onResign={handleResign}
-            turn={turn}
-            whiteTimer={timers.w}
-            blackTimer={timers.b}
-            gameMode={gameMode}
-            messages={messages}
-            onSendMessage={handleSendMessage}
-          />
-          {!onlineRoom && (
-            <button onClick={createOnlineGame} className="w-full mt-4 bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-xl font-bold text-white shadow-[0_4px_0_rgb(69,101,40)] transition-all flex items-center justify-center space-x-2">
-              <i className="fas fa-bolt"></i>
-              <span>NOVA PARTIDA ONLINE</span>
-            </button>
-          )}
         </div>
       </main>
 
+      {/* Modal de Espera */}
       {isWaiting && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[10000]">
-          <div className="bg-[#262421] p-10 rounded-2xl border border-white/10 max-w-sm w-full text-center">
-            <div className="animate-bounce mb-4 text-[#81b64c] text-5xl">
-              <i className="fas fa-link"></i>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[10000]">
+          <div className="bg-[#262421] p-10 rounded-2xl border border-white/10 max-w-sm w-full text-center animate-in fade-in zoom-in duration-300">
+            <div className="relative w-20 h-20 mx-auto mb-6">
+              <div className="absolute inset-0 rounded-full border-4 border-[#81b64c]/20 border-t-[#81b64c] animate-spin"></div>
+              <div className="absolute inset-0 flex items-center justify-center text-[#81b64c] text-3xl">
+                <i className="fas fa-chess-knight"></i>
+              </div>
             </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Desafiar Amigo</h2>
-            <p className="text-gray-400 text-sm mb-6">Compartilhe o link para começar:</p>
-            <div className="bg-[#1a1917] p-4 rounded-xl border border-white/5 flex items-center mb-8">
-              <input readOnly value={`${window.location.origin}/?room=${onlineRoom}`} className="bg-transparent text-[10px] text-[#81b64c] flex-1 outline-none font-mono" />
+            <h2 className="text-xl font-bold text-white mb-2">Aguardando Oponente</h2>
+            <p className="text-gray-400 text-sm mb-6 leading-relaxed">Envie este link para um amigo para começar o duelo em tempo real:</p>
+            <div className="bg-[#1a1917] p-3 rounded-lg border border-white/5 flex items-center mb-8">
+              <input readOnly value={`${window.location.origin}/?room=${onlineRoom}`} className="bg-transparent text-[11px] text-[#81b64c] flex-1 outline-none font-mono" />
               <button 
                 onClick={() => { 
                   navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`);
-                  alert('Link copiado!');
+                  alert('Link de convite copiado!');
                 }} 
-                className="ml-2 text-gray-400 hover:text-white"
+                className="ml-2 bg-[#3c3a37] px-3 py-1.5 rounded text-white text-xs hover:bg-[#4a4844] transition-colors"
               >
-                <i className="fas fa-copy"></i>
+                Copiar
               </button>
             </div>
-            <button onClick={() => window.location.href = '/'} className="text-red-400 font-bold uppercase text-xs tracking-widest hover:underline">Cancelar</button>
+            <button onClick={() => window.location.href = '/'} className="text-gray-500 text-xs font-bold uppercase hover:text-red-400 transition-colors">Cancelar Desafio</button>
           </div>
         </div>
       )}
 
+      {/* Modal de Fim de Jogo */}
       {gameOver && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[20000]">
-          <div className="bg-[#262421] p-12 rounded-3xl border border-white/10 text-center max-w-sm">
-            <div className="text-yellow-500 text-6xl mb-6"><i className="fas fa-chess-king"></i></div>
-            <h2 className="text-3xl font-bold text-white mb-4">Partida Encerrada</h2>
+          <div className="bg-[#262421] p-12 rounded-3xl border border-white/10 text-center max-w-sm animate-in zoom-in duration-300">
+            <div className="text-yellow-500 text-6xl mb-6 drop-shadow-[0_0_15px_rgba(234,179,8,0.3)]">
+              <i className="fas fa-trophy"></i>
+            </div>
+            <h2 className="text-3xl font-bold text-white mb-4">Fim de Jogo</h2>
             <p className="text-gray-400 mb-10 leading-relaxed font-medium">{gameOver}</p>
             <button onClick={() => window.location.href = '/'} className="w-full bg-[#81b64c] py-4 rounded-2xl font-bold text-white shadow-[0_5px_0_rgb(69,101,40)] hover:brightness-110 active:translate-y-1 active:shadow-none transition-all">
               NOVA PARTIDA

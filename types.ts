@@ -41,3 +41,10 @@ export interface User {
   elo: number;
   avatar: string;
 }
+
+// Fixed: Added global window type definition for PeerJS to avoid "Property 'Peer' does not exist" errors
+declare global {
+  interface Window {
+    Peer: any;
+  }
+}

@@ -8,9 +8,10 @@ interface ChessBoardProps {
   board: Board;
   onMove: (move: Move) => void;
   turn: 'w' | 'b';
+  isFlipped?: boolean;
 }
 
-const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn }) => {
+const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped = false }) => {
   const [selected, setSelected] = useState<Position | null>(null);
 
   const handleSquareClick = (row: number, col: number) => {
@@ -48,11 +49,16 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn }) => {
 
   const kingInCheck = isCheck(board, turn) ? findKing(board, turn) : null;
 
+  // Lógica de inversão: se isFlipped, as linhas vão de 7 a 0 e colunas de 7 a 0
+  const rowIndices = isFlipped ? [0, 1, 2, 3, 4, 5, 6, 7].reverse() : [0, 1, 2, 3, 4, 5, 6, 7];
+  const colIndices = isFlipped ? [0, 1, 2, 3, 4, 5, 6, 7].reverse() : [0, 1, 2, 3, 4, 5, 6, 7];
+
   return (
     <div className="aspect-square w-full max-w-[600px] bg-[#262421] rounded shadow-2xl overflow-hidden border-8 border-[#262421] relative">
       <div className="chess-board-grid w-full h-full">
-        {board.map((row, rIdx) => (
-          row.map((piece, cIdx) => {
+        {rowIndices.map((rIdx) => (
+          colIndices.map((cIdx) => {
+            const piece = board[rIdx][cIdx];
             const isLight = (rIdx + cIdx) % 2 === 0;
             const isSelected = selected?.row === rIdx && selected?.col === cIdx;
             const isKingInCheck = kingInCheck?.row === rIdx && kingInCheck?.col === cIdx;
@@ -67,13 +73,13 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn }) => {
                   ${isKingInCheck ? 'bg-red-500/80 shadow-[inset_0_0_20px_rgba(255,0,0,0.5)]' : ''}
                 `}
               >
-                {/* Board Notation */}
-                {cIdx === 0 && (
+                {/* Board Notation - Adjusting for flip */}
+                {(isFlipped ? cIdx === 7 : cIdx === 0) && (
                   <span className={`absolute top-0.5 left-1 text-[10px] font-bold select-none ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>
                     {8 - rIdx}
                   </span>
                 )}
-                {rIdx === 7 && (
+                {(isFlipped ? rIdx === 0 : rIdx === 7) && (
                   <span className={`absolute bottom-0.5 right-1 text-[10px] font-bold select-none ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>
                     {String.fromCharCode(97 + cIdx)}
                   </span>

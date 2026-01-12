@@ -20,13 +20,9 @@ const App: React.FC = () => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [messages, setMessages] = useState<{user: string, text: string}[]>([]);
 
-  const skipNextRemoteUpdate = useRef(false);
-  const historyRef = useRef<Move[]>([]);
-
-  // Sincroniza a Ref com o estado para acesso em callbacks
-  useEffect(() => {
-    historyRef.current = history;
-  }, [history]);
+  // Refs para controle de sincronização sem disparar re-renders infinitos
+  const historyCountRef = useRef(0);
+  const isUpdatingFromRemote = useRef(false);
 
   // Escuta mudanças no Firebase
   useEffect(() => {
@@ -40,31 +36,32 @@ const App: React.FC = () => {
       setIsWaiting(false);
 
       const roomRef = db.ref(`rooms/${roomId}`);
-      
-      // Avisa que o oponente entrou (Pretas)
       roomRef.update({ status: 'playing' });
 
       const handleData = (snapshot: any) => {
         const data = snapshot.val();
         if (!data) return;
 
-        if (skipNextRemoteUpdate.current) {
-          skipNextRemoteUpdate.current = false;
-          return;
-        }
-
-        // Sincronizar Histórico e Tabuleiro apenas se houver lances novos
-        if (data.moves && data.moves.length !== historyRef.current.length) {
+        // CRÍTICO: Só atualiza se o remoto tiver MAIS lances que o local
+        // Isso evita que o próprio lance do jogador cause um reset ou queda
+        const remoteMoves = data.moves || [];
+        if (remoteMoves.length > historyCountRef.current) {
+          isUpdatingFromRemote.current = true;
+          
           let currentBoard = createInitialBoard();
-          data.moves.forEach((m: Move) => {
+          remoteMoves.forEach((m: Move) => {
             currentBoard = makeMove(currentBoard, m);
           });
+          
           setBoard(currentBoard);
-          setHistory(data.moves);
+          setHistory(remoteMoves);
+          historyCountRef.current = remoteMoves.length;
           
           if (data.lastTurn) {
             setTurn(data.lastTurn);
           }
+          
+          isUpdatingFromRemote.current = false;
         }
 
         if (data.messages) {
@@ -79,7 +76,7 @@ const App: React.FC = () => {
       roomRef.on('value', handleData);
       return () => roomRef.off('value', handleData);
     }
-  }, [onlineRoom]); // Removidas dependências instáveis que causavam re-subscrição
+  }, []); // Dependência vazia para o listener durar a sessão toda
 
   const createOnlineGame = () => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -124,10 +121,10 @@ const App: React.FC = () => {
     setBoard(newBoard);
     setHistory(newHistory);
     setTurn(nextTurn);
+    historyCountRef.current = newHistory.length;
 
     // Atualização Remota
     if (gameMode === GameMode.ONLINE && onlineRoom) {
-      skipNextRemoteUpdate.current = true;
       db.ref(`rooms/${onlineRoom}`).update({
         moves: newHistory,
         lastTurn: nextTurn,
@@ -148,6 +145,7 @@ const App: React.FC = () => {
     newHistory.forEach(m => { tempBoard = makeMove(tempBoard, m); });
     setBoard(tempBoard);
     setHistory(newHistory);
+    historyCountRef.current = newHistory.length;
     setTurn(prev => prev === 'w' ? 'b' : 'w');
   }, [gameMode, history, gameOver]);
 

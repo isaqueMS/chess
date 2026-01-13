@@ -24,25 +24,37 @@ const App: React.FC = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [opponent, setOpponent] = useState<User | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [copyFeedback, setCopyFeedback] = useState(false);
 
   const lastProcessedTs = useRef<number>(0);
 
-  // Perfil Persistente
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('chess_profile');
     if (saved) return JSON.parse(saved);
     return {
       id: `u_${Math.random().toString(36).substr(2, 5)}`,
-      name: 'Grandmaster',
+      name: 'Player',
       elo: 1200,
       avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
     };
   });
 
+  // CRONÔMETRO
   useEffect(() => {
-    localStorage.setItem('chess_profile', JSON.stringify(currentUser));
-  }, [currentUser]);
+    if (gameOver || isWaiting || (gameMode === GameMode.ONLINE && !opponent)) return;
+    
+    const interval = setInterval(() => {
+      setTimers(prev => {
+        const newTimers = { ...prev, [turn]: Math.max(0, prev[turn] - 1) };
+        if (newTimers[turn] <= 0) {
+          setGameOver(`Tempo esgotado! Vitória das ${turn === 'w' ? 'Pretas' : 'Brancas'}`);
+          clearInterval(interval);
+        }
+        return newTimers;
+      });
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [turn, gameOver, isWaiting, gameMode, opponent]);
 
   const resetGameState = useCallback(() => {
     boardRef.current = createInitialBoard();
@@ -52,15 +64,8 @@ const App: React.FC = () => {
     setTurn('w');
     setGameOver(null);
     setTimers({ w: 600, b: 600 });
+    setMessages([]);
   }, []);
-
-  const updateElo = (won: boolean | null) => {
-    if (won === null) return;
-    setCurrentUser(prev => ({
-      ...prev,
-      elo: won ? prev.elo + 25 : Math.max(100, prev.elo - 20)
-    }));
-  };
 
   const applyMove = useCallback((move: Move) => {
     try {
@@ -74,57 +79,56 @@ const App: React.FC = () => {
 
       const state = getGameState(newBoard, nextTurn);
       if (state === 'checkmate') {
-        const winner = move.piece.color;
-        setGameOver(`Xeque-mate! Vitória das ${winner === 'w' ? 'Brancas' : 'Pretas'}`);
-        if (gameMode === GameMode.ONLINE) updateElo(winner === playerColor);
+        setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
       } else if (state === 'stalemate') {
         setGameOver('Empate por afogamento.');
       }
       return true;
     } catch (e) { return false; }
-  }, [gameMode, playerColor]);
+  }, []);
 
-  // Online Logic: Listener de Sala e Lances
+  // CHAT & ONLINE SYNC
   useEffect(() => {
     if (!onlineRoom) return;
     const roomRef = db.ref(`rooms/${onlineRoom}`);
     
-    const handleRoomData = (snap: any) => {
+    roomRef.on('value', (snap) => {
       const data = snap.val();
       if (!data) return;
-      
-      if (playerColor === 'w' && data.playerB) {
-        setOpponent(data.playerB);
-        if (data.status === 'playing') setIsWaiting(false);
-      }
-      if (playerColor === 'b' && data.playerA) {
-        setOpponent(data.playerA);
-        if (data.status === 'playing') setIsWaiting(false);
-      }
-
-      if (data.status === 'resigned') {
-        setGameOver('O oponente desistiu.');
-        updateElo(true);
-      }
-    };
-
-    roomRef.on('value', handleRoomData);
+      if (playerColor === 'w') setOpponent(data.playerB);
+      else setOpponent(data.playerA);
+      if (data.status === 'playing') setIsWaiting(false);
+      if (data.status === 'resigned') setGameOver('O oponente desistiu.');
+    });
 
     const movesRef = roomRef.child('moves');
     movesRef.on('child_added', (snap) => {
       const data = snap.val();
-      if (!data || data.timestamp <= lastProcessedTs.current) return;
-      if (data.playerId !== currentUser.id) {
+      if (data && data.timestamp > lastProcessedTs.current && data.playerId !== currentUser.id) {
         lastProcessedTs.current = data.timestamp;
         applyMove(data.move);
       }
     });
 
-    return () => {
-      roomRef.off('value', handleRoomData);
-      movesRef.off();
-    };
+    const chatRef = roomRef.child('chat');
+    chatRef.on('child_added', (snap) => {
+      setMessages(prev => [...prev, snap.val()]);
+    });
+
+    return () => { roomRef.off(); movesRef.off(); chatRef.off(); };
   }, [onlineRoom, playerColor, currentUser.id, applyMove]);
+
+  const handleSendMessage = (text: string) => {
+    if (onlineRoom) {
+      db.ref(`rooms/${onlineRoom}/chat`).push({
+        user: currentUser.name,
+        text,
+        timestamp: Date.now()
+      });
+    } else {
+      setMessages(prev => [...prev, { user: 'Você', text }]);
+    }
+  };
 
   const handleMove = (move: Move) => {
     if (gameOver) return;
@@ -144,50 +148,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Funções de Gerenciamento de Partida Online
-  const createOnlineGame = () => {
-    const id = Math.random().toString(36).substring(2, 8);
-    resetGameState();
-    setOnlineRoom(id);
-    setGameMode(GameMode.ONLINE);
-    setPlayerColor('w');
-    setIsWaiting(true);
-    setOpponent(null);
-    
-    db.ref(`rooms/${id}`).set({
-      id,
-      status: 'waiting',
-      playerA: currentUser,
-      createdAt: Date.now()
-    });
-  };
-
-  const joinRoom = useCallback((roomId: string) => {
-    db.ref(`rooms/${roomId}`).once('value').then((snap) => {
-      const data = snap.val();
-      if (data && data.status === 'waiting') {
-        resetGameState();
-        setOnlineRoom(roomId);
-        setGameMode(GameMode.ONLINE);
-        setPlayerColor('b');
-        setOpponent(data.playerA);
-        setIsWaiting(false);
-        
-        db.ref(`rooms/${roomId}`).update({
-          playerB: currentUser,
-          status: 'playing'
-        });
-      }
-    });
-  }, [currentUser, resetGameState]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    if (room) joinRoom(room);
-  }, [joinRoom]);
-
-  // IA Handler
+  // IA Progressiva
   useEffect(() => {
     if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
       const timeout = setTimeout(() => {
@@ -204,145 +165,85 @@ const App: React.FC = () => {
       
       <main className="flex-1 flex flex-col items-center overflow-y-auto pt-4 px-2">
         <div className="flex flex-col lg:flex-row gap-6 w-full max-w-6xl items-center lg:items-start">
-          
           <div className="w-full max-w-[600px] flex flex-col gap-2">
-            {/* Oponente UI */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#3c3a37] rounded flex items-center justify-center overflow-hidden">
-                   {opponent ? <img src={opponent.avatar} className="w-full h-full" alt="Avatar" /> : <i className="fas fa-robot text-gray-500"></i>}
+                <div className="w-10 h-10 bg-[#3c3a37] rounded overflow-hidden">
+                   {opponent ? <img src={opponent.avatar} className="w-full h-full" /> : <i className="fas fa-robot p-3 text-gray-500"></i>}
                 </div>
                 <div>
-                  <div className="font-bold text-sm">
-                    {opponent?.name || (gameMode === GameMode.AI ? `Stockfish Lv.${Math.floor(currentUser.elo/500)}` : 'Aguardando...')}
-                  </div>
+                  <div className="font-bold text-sm">{opponent?.name || (gameMode === GameMode.AI ? 'Stockfish 3000' : 'Aguardando...')}</div>
                   <div className="text-[10px] text-gray-500 font-bold uppercase">ELO {opponent?.elo || 1200}</div>
                 </div>
               </div>
-              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn !== playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
+              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn !== playerColor ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
                 {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
               </div>
             </div>
 
-            <ChessBoard 
-              board={board} 
-              onMove={handleMove} 
-              turn={turn} 
-              isFlipped={playerColor === 'b'} 
-              lastMove={history.length > 0 ? history[history.length - 1] : null}
-              gameOver={!!gameOver}
-            />
+            <ChessBoard board={board} onMove={handleMove} turn={turn} isFlipped={playerColor === 'b'} lastMove={history.length > 0 ? history[history.length - 1] : null} gameOver={!!gameOver} />
 
-            {/* Jogador UI */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-3">
-                <img src={currentUser.avatar} className="w-10 h-10 rounded-md cursor-pointer" onClick={() => setShowProfileModal(true)} alt="Me" />
+                <img src={currentUser.avatar} className="w-10 h-10 rounded-md cursor-pointer" onClick={() => setShowProfileModal(true)} />
                 <div>
                   <div className="font-bold text-sm">{currentUser.name}</div>
                   <div className="text-[10px] text-[#81b64c] font-bold uppercase">ELO {currentUser.elo}</div>
                 </div>
               </div>
-              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn === playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
+              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn === playerColor ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
                 {Math.floor(timers[playerColor] / 60)}:{(timers[playerColor] % 60).toString().padStart(2, '0')}
               </div>
             </div>
           </div>
 
           <div className="w-full lg:w-[380px] flex flex-col gap-4">
-            <div className="h-[450px]">
+            <div className="h-[500px]">
               <GameControls 
                 history={history} 
                 onUndo={() => { if (gameMode !== GameMode.ONLINE) resetGameState(); }} 
-                onResign={() => { if (onlineRoom) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' }); setGameOver('Você desistiu.'); }} 
+                onResign={() => setGameOver('Você desistiu.')} 
                 turn={turn} 
-                whiteTimer={timers.w} blackTimer={timers.b} 
-                gameMode={gameMode} 
+                whiteTimer={timers.w} 
+                blackTimer={timers.b} 
+                gameMode={gameMode}
+                messages={messages}
+                onSendMessage={handleSendMessage}
               />
             </div>
 
             {gameMode === GameMode.LOCAL && (
               <div className="flex flex-col gap-2">
-                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-transform active:translate-y-1">
-                  <i className="fas fa-bolt mr-2"></i> JOGAR ONLINE
-                </button>
-                <button onClick={() => { setGameMode(GameMode.AI); resetGameState(); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844]">
-                  DESAFIAR IA
-                </button>
+                <button onClick={() => {
+                  const id = Math.random().toString(36).substring(2, 8);
+                  setOnlineRoom(id); setGameMode(GameMode.ONLINE); setPlayerColor('w'); setIsWaiting(true);
+                  db.ref(`rooms/${id}`).set({ id, status: 'waiting', playerA: currentUser });
+                }} className="bg-[#81b64c] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)]">JOGAR ONLINE</button>
+                <button onClick={() => { setGameMode(GameMode.AI); resetGameState(); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold">IA DIFICULDADE MAX</button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Modal de Espera / Convite */}
         {isWaiting && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-            <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-sm border border-white/10 text-center shadow-2xl">
-              <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i className="fas fa-user-plus text-[#81b64c] text-2xl"></i>
-              </div>
-              <h2 className="text-2xl font-bold mb-2">Convidar Amigo</h2>
-              <p className="text-gray-400 text-sm mb-6">Envie o link abaixo. O jogo começará assim que o oponente entrar.</p>
-              
-              <div className="bg-[#1a1917] p-4 rounded-xl mb-6 border border-white/5 break-all text-xs font-mono text-[#81b64c]">
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4">
+            <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-sm text-center border border-white/10">
+              <h2 className="text-xl font-bold mb-4">Convite Enviado</h2>
+              <div className="bg-[#1a1917] p-3 rounded mb-4 text-xs font-mono text-[#81b64c]">
                 {window.location.origin}/?room={onlineRoom}
               </div>
-
-              <button 
-                onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`);
-                  setCopyFeedback(true);
-                  setTimeout(() => setCopyFeedback(false), 2000);
-                }} 
-                className={`w-full py-4 rounded-xl font-bold transition-all ${copyFeedback ? 'bg-[#81b64c]' : 'bg-[#3c3a37]'}`}
-              >
-                {copyFeedback ? 'LINK COPIADO!' : 'COPIAR LINK'}
-              </button>
-              
-              <button 
-                onClick={() => { setOnlineRoom(null); setGameMode(GameMode.LOCAL); setIsWaiting(false); }} 
-                className="mt-4 text-gray-500 text-xs font-bold uppercase hover:text-white"
-              >
-                Cancelar
-              </button>
+              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`); }} className="w-full bg-[#3c3a37] py-3 rounded font-bold mb-2">COPIAR LINK</button>
+              <button onClick={() => setIsWaiting(false)} className="text-gray-500 text-sm">Cancelar</button>
             </div>
           </div>
         )}
 
-        {/* Perfil Modal */}
-        {showProfileModal && (
-          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[110] p-4">
-            <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-md border border-white/10">
-              <h2 className="text-2xl font-bold mb-6">Configurações de Perfil</h2>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs text-gray-500 uppercase font-bold">Nome de Usuário</label>
-                  <input 
-                    value={currentUser.name} 
-                    onChange={e => setCurrentUser({...currentUser, name: e.target.value})} 
-                    className="w-full bg-[#1a1917] border border-[#3c3a37] p-3 rounded mt-1 outline-none focus:border-[#81b64c]" 
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 uppercase font-bold">Avatar</label>
-                  <div className="flex gap-4 mt-2 items-center">
-                    <img src={currentUser.avatar} className="w-16 h-16 rounded shadow-lg" alt="Preview" />
-                    <button onClick={() => setCurrentUser({...currentUser, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`})} className="bg-[#3c3a37] px-4 py-2 rounded text-sm font-bold">Novo Avatar</button>
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => setShowProfileModal(false)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold mt-8 shadow-lg">SALVAR ALTERAÇÕES</button>
-            </div>
-          </div>
-        )}
-
-        {/* Game Over Modal */}
         {gameOver && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
             <div className="bg-[#262421] p-10 rounded-2xl text-center shadow-2xl max-w-sm w-full border border-white/10">
-              <div className="text-6xl mb-4">🏁</div>
-              <h2 className="text-2xl font-bold mb-2">Fim de Partida</h2>
+              <h2 className="text-2xl font-bold mb-2">Fim de Jogo</h2>
               <p className="text-gray-400 mb-8">{gameOver}</p>
-              <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-lg">NOVA PARTIDA</button>
+              <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-lg">NOVO JOGO</button>
             </div>
           </div>
         )}

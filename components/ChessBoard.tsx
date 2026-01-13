@@ -10,18 +10,18 @@ interface ChessBoardProps {
   turn: 'w' | 'b';
   isFlipped?: boolean;
   lastMove: Move | null;
+  gameOver?: boolean;
 }
 
-const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped = false, lastMove }) => {
+const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped = false, lastMove, gameOver }) => {
   const [selected, setSelected] = useState<Position | null>(null);
   const [promotionPending, setPromotionPending] = useState<Move | null>(null);
 
   const handleSquareClick = (r: number, c: number) => {
-    if (promotionPending) return;
+    if (promotionPending || gameOver) return;
 
     const piece = board[r][c];
 
-    // Se já houver algo selecionado
     if (selected) {
       if (selected.row === r && selected.col === c) {
         setSelected(null);
@@ -30,13 +30,11 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
 
       const selectedPiece = board[selected.row][selected.col];
       
-      // Se clicar em outra peça da mesma cor, troca a seleção
       if (piece && piece.color === turn) {
         setSelected({ row: r, col: c });
         return;
       }
 
-      // Tenta realizar o movimento
       if (selectedPiece) {
         const move: Move = {
           from: selected,
@@ -58,7 +56,6 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
       }
     }
 
-    // Seleciona se for a vez da cor certa
     if (piece && piece.color === turn) {
       setSelected({ row: r, col: c });
     }
@@ -101,7 +98,6 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
                   ${isLastMove ? 'after:absolute after:inset-0 after:bg-yellow-400/30' : ''}
                 `}
               >
-                {/* Coordenadas */}
                 {c === (isFlipped ? 7 : 0) && <span className={`absolute top-0.5 left-0.5 text-[9px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>{8-r}</span>}
                 {r === (isFlipped ? 0 : 7) && <span className={`absolute bottom-0.5 right-0.5 text-[9px] font-bold ${isLight ? 'text-[#779556]' : 'text-[#ebecd0]'}`}>{String.fromCharCode(97+c)}</span>}
 
@@ -113,7 +109,6 @@ const ChessBoard: React.FC<ChessBoardProps> = ({ board, onMove, turn, isFlipped 
                   />
                 )}
                 
-                {/* Hint de movimento */}
                 {selected && !piece && isValidMove(board, { from: selected, to: {row:r, col:c}, piece: board[selected.row][selected.col]! }) && (
                   <div className="w-3 h-3 rounded-full bg-black/10 z-0"></div>
                 )}

@@ -21,9 +21,13 @@ const App: React.FC = () => {
   const [onlineRoom, setOnlineRoom] = useState<string | null>(null);
   const [playerColor, setPlayerColor] = useState<Color>('w');
   const [isWaiting, setIsWaiting] = useState(false);
+  const [isSpectator, setIsSpectator] = useState(false);
+  const [spectatorCount, setSpectatorCount] = useState(0);
   const [messages, setMessages] = useState<any[]>([]);
   const [opponent, setOpponent] = useState<User | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showRanking, setShowRanking] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<User[]>([]);
   const [copyStatus, setCopyStatus] = useState<'Copiar' | 'Copiado!'>('Copiar');
 
   const lastProcessedTs = useRef<number>(0);
@@ -39,10 +43,23 @@ const App: React.FC = () => {
     };
   });
 
-  // CRONÔMETRO CORRIGIDO
+  // Persistir ranking no Firebase
   useEffect(() => {
-    if (gameOver || isWaiting || (gameMode === GameMode.ONLINE && !opponent)) return;
-    
+    db.ref(`ranking/${currentUser.id}`).set(currentUser);
+    const rankingRef = db.ref('ranking').orderByChild('elo').limitToLast(10);
+    rankingRef.on('value', (snap) => {
+      const val = snap.val();
+      if (val) {
+        const list = Object.values(val) as User[];
+        setLeaderboard(list.sort((a, b) => b.elo - a.elo));
+      }
+    });
+    return () => rankingRef.off();
+  }, [currentUser]);
+
+  // CRONÔMETRO
+  useEffect(() => {
+    if (gameOver || isWaiting || isSpectator || (gameMode === GameMode.ONLINE && !opponent)) return;
     const interval = setInterval(() => {
       setTimers(prev => {
         const currentSeconds = prev[turn];
@@ -54,9 +71,8 @@ const App: React.FC = () => {
         return { ...prev, [turn]: currentSeconds - 1 };
       });
     }, 1000);
-    
     return () => clearInterval(interval);
-  }, [turn, gameOver, isWaiting, gameMode, opponent]);
+  }, [turn, gameOver, isWaiting, gameMode, opponent, isSpectator]);
 
   const resetGameState = useCallback(() => {
     boardRef.current = createInitialBoard();
@@ -67,7 +83,14 @@ const App: React.FC = () => {
     setGameOver(null);
     setTimers({ w: 600, b: 600 });
     setMessages([]);
+    setIsSpectator(false);
   }, []);
+
+  const updateElo = (won: boolean | null) => {
+    if (won === null || isSpectator) return;
+    const newElo = won ? currentUser.elo + 15 : Math.max(100, currentUser.elo - 12);
+    setCurrentUser(prev => ({ ...prev, elo: newElo }));
+  };
 
   const applyMove = useCallback((move: Move) => {
     try {
@@ -78,27 +101,42 @@ const App: React.FC = () => {
       setHistory([...historyRef.current]);
       const nextTurn = move.piece.color === 'w' ? 'b' : 'w';
       setTurn(nextTurn);
-
       const state = getGameState(newBoard, nextTurn);
       if (state === 'checkmate') {
+        const won = move.piece.color === playerColor;
         setGameOver(`Xeque-mate! Vitória das ${move.piece.color === 'w' ? 'Brancas' : 'Pretas'}`);
+        if (gameMode === GameMode.ONLINE) updateElo(won);
       } else if (state === 'stalemate') {
         setGameOver('Empate por afogamento.');
       }
       return true;
     } catch (e) { return false; }
-  }, []);
+  }, [playerColor, gameMode, currentUser.elo, isSpectator]);
 
-  // CHAT & ONLINE SYNC
+  // SYNC ONLINE & ESPECTADORES
   useEffect(() => {
     if (!onlineRoom) return;
     const roomRef = db.ref(`rooms/${onlineRoom}`);
     
+    // Contador de Espectadores
+    const specRef = roomRef.child('spectators').child(currentUser.id);
+    specRef.set(true);
+    specRef.onDisconnect().remove();
+
     roomRef.on('value', (snap) => {
       const data = snap.val();
       if (!data) return;
-      if (playerColor === 'w') setOpponent(data.playerB || null);
-      else setOpponent(data.playerA || null);
+      
+      const specs = data.spectators ? Object.keys(data.spectators).length : 0;
+      setSpectatorCount(specs);
+
+      if (isSpectator) {
+        setOpponent(data.playerB);
+        // PlayerA visualmente
+      } else {
+        if (playerColor === 'w') setOpponent(data.playerB || null);
+        else setOpponent(data.playerA || null);
+      }
       
       if (data.status === 'playing') setIsWaiting(false);
       if (data.status === 'resigned') setGameOver('O oponente desistiu.');
@@ -118,23 +156,11 @@ const App: React.FC = () => {
       setMessages(prev => [...prev, snap.val()]);
     });
 
-    return () => { roomRef.off(); movesRef.off(); chatRef.off(); };
-  }, [onlineRoom, playerColor, currentUser.id, applyMove]);
-
-  const handleSendMessage = (text: string) => {
-    if (onlineRoom) {
-      db.ref(`rooms/${onlineRoom}/chat`).push({
-        user: currentUser.name,
-        text,
-        timestamp: Date.now()
-      });
-    } else {
-      setMessages(prev => [...prev, { user: 'Você', text }]);
-    }
-  };
+    return () => { roomRef.off(); movesRef.off(); chatRef.off(); specRef.remove(); };
+  }, [onlineRoom, playerColor, currentUser.id, applyMove, isSpectator]);
 
   const handleMove = (move: Move) => {
-    if (gameOver) return;
+    if (gameOver || isSpectator) return;
     if (gameMode === GameMode.ONLINE) {
       if (turn !== playerColor || !onlineRoom) return;
       const ts = Date.now();
@@ -151,43 +177,30 @@ const App: React.FC = () => {
     }
   };
 
-  const copyInviteLink = async () => {
-    const link = `${window.location.origin}/?room=${onlineRoom}`;
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopyStatus('Copiado!');
-      setTimeout(() => setCopyStatus('Copiar'), 2000);
-    } catch (err) {
-      console.error('Falha ao copiar', err);
-    }
+  const createOnlineGame = () => {
+    const id = Math.random().toString(36).substring(2, 8);
+    setOnlineRoom(id); setGameMode(GameMode.ONLINE); setPlayerColor('w'); setIsWaiting(true); setIsSpectator(false);
+    db.ref(`rooms/${id}`).set({ id, status: 'waiting', playerA: currentUser });
   };
 
-  // IA Progressiva
-  useEffect(() => {
-    if (gameMode === GameMode.AI && turn === 'b' && !gameOver) {
-      const timeout = setTimeout(() => {
-        const move = getBestMove(boardRef.current, 'b', currentUser.elo);
-        if (move) applyMove(move);
-      }, 600);
-      return () => clearTimeout(timeout);
-    }
-  }, [turn, gameMode, gameOver, applyMove, currentUser.elo]);
-
-  // Entrada automática por link
+  // Entrada por link (Player 2 ou Espectador)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
     if (room && !onlineRoom) {
       db.ref(`rooms/${room}`).once('value').then(snap => {
         const data = snap.val();
-        if (data && data.status === 'waiting') {
-          setOnlineRoom(room);
-          setGameMode(GameMode.ONLINE);
+        if (!data) return;
+        setOnlineRoom(room);
+        setGameMode(GameMode.ONLINE);
+        
+        if (data.status === 'waiting') {
           setPlayerColor('b');
-          db.ref(`rooms/${room}`).update({
-            playerB: currentUser,
-            status: 'playing'
-          });
+          db.ref(`rooms/${room}`).update({ playerB: currentUser, status: 'playing' });
+        } else {
+          // Entra como espectador
+          setIsSpectator(true);
+          setPlayerColor('w'); // Ver como brancas por padrão
         }
       });
     }
@@ -195,12 +208,23 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#312e2b] text-white overflow-hidden">
-      <Sidebar user={currentUser} onProfileClick={() => setShowProfileModal(true)} />
+      <Sidebar 
+        user={currentUser} 
+        onProfileClick={() => setShowProfileModal(true)} 
+        onRankingClick={() => setShowRanking(true)}
+      />
       
       <main className="flex-1 flex flex-col items-center overflow-y-auto pt-4 px-2">
         <div className="flex flex-col lg:flex-row gap-6 w-full max-w-6xl items-center lg:items-start">
-          <div className="w-full max-w-[600px] flex flex-col gap-2">
-            {/* HUD OPONENTE */}
+          <div className="w-full max-w-[600px] flex flex-col gap-2 relative">
+            
+            {isSpectator && (
+              <div className="absolute top-2 right-2 z-20 bg-red-600 px-3 py-1 rounded-full text-[10px] font-bold animate-pulse flex items-center gap-2">
+                <i className="fas fa-eye"></i> MODO ESPECTADOR
+              </div>
+            )}
+
+            {/* OPONENTE */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-[#3c3a37] rounded overflow-hidden flex items-center justify-center">
@@ -211,8 +235,11 @@ const App: React.FC = () => {
                   <div className="text-[10px] text-gray-500 font-bold uppercase">ELO {opponent?.elo || 1200}</div>
                 </div>
               </div>
-              <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn !== playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
-                {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
+              <div className="flex items-center gap-4">
+                <div className="text-[10px] text-gray-500 font-bold"><i className="fas fa-users mr-1"></i> {spectatorCount}</div>
+                <div className={`px-4 py-1.5 rounded font-mono text-xl ${turn !== playerColor && !gameOver ? 'bg-white text-black font-bold' : 'bg-[#211f1c] text-gray-500'}`}>
+                  {Math.floor(timers[playerColor === 'w' ? 'b' : 'w'] / 60)}:{(timers[playerColor === 'w' ? 'b' : 'w'] % 60).toString().padStart(2, '0')}
+                </div>
               </div>
             </div>
 
@@ -225,12 +252,12 @@ const App: React.FC = () => {
               gameOver={!!gameOver} 
             />
 
-            {/* HUD JOGADOR */}
+            {/* JOGADOR */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#262421]/50 rounded border border-white/5">
               <div className="flex items-center gap-3">
                 <img src={currentUser.avatar} className="w-10 h-10 rounded-md cursor-pointer border border-white/10" onClick={() => setShowProfileModal(true)} />
                 <div>
-                  <div className="font-bold text-sm">{currentUser.name}</div>
+                  <div className="font-bold text-sm">{currentUser.name} {isSpectator && '(Você)'}</div>
                   <div className="text-[10px] text-[#81b64c] font-bold uppercase">ELO {currentUser.elo}</div>
                 </div>
               </div>
@@ -246,98 +273,111 @@ const App: React.FC = () => {
                 history={history} 
                 onUndo={() => { if (gameMode !== GameMode.ONLINE) resetGameState(); }} 
                 onResign={() => {
-                  if (onlineRoom) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
-                  setGameOver('Você desistiu.');
+                  if (onlineRoom && !isSpectator) db.ref(`rooms/${onlineRoom}`).update({ status: 'resigned' });
+                  setGameOver('Partida encerrada.');
                 }} 
                 turn={turn} 
                 whiteTimer={timers.w} 
                 blackTimer={timers.b} 
                 gameMode={gameMode}
                 messages={messages}
-                onSendMessage={handleSendMessage}
+                onSendMessage={(text) => {
+                  if (onlineRoom) db.ref(`rooms/${onlineRoom}/chat`).push({ user: currentUser.name, text, timestamp: Date.now() });
+                }}
               />
             </div>
 
-            {gameMode === GameMode.LOCAL && (
+            {!onlineRoom && (
               <div className="flex flex-col gap-2">
-                <button onClick={() => {
-                  const id = Math.random().toString(36).substring(2, 8);
-                  setOnlineRoom(id); setGameMode(GameMode.ONLINE); setPlayerColor('w'); setIsWaiting(true);
-                  db.ref(`rooms/${id}`).set({ id, status: 'waiting', playerA: currentUser });
-                }} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-transform active:translate-y-1">
-                  JOGAR ONLINE
+                <button onClick={createOnlineGame} className="bg-[#81b64c] hover:bg-[#95c562] py-4 rounded-lg font-bold text-xl shadow-[0_4px_0_rgb(69,101,40)] transition-transform active:translate-y-1">
+                  NOVA PARTIDA ONLINE
                 </button>
-                <button onClick={() => { setGameMode(GameMode.AI); resetGameState(); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold hover:bg-[#4a4844]">
-                  DESAFIAR IA
-                </button>
+                <button onClick={() => { setGameMode(GameMode.AI); resetGameState(); }} className="bg-[#3c3a37] py-3 rounded-lg font-bold">DESAFIAR COMPUTADOR</button>
               </div>
+            )}
+            
+            {onlineRoom && (
+              <button onClick={() => window.location.assign(window.location.origin)} className="bg-[#3c3a37] py-3 rounded-lg font-bold">SAIR DA SALA</button>
             )}
           </div>
         </div>
 
+        {/* MODAL RANKING */}
+        {showRanking && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[120] p-4">
+            <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-md border border-white/10 shadow-2xl">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-[#81b64c]"><i className="fas fa-trophy mr-2"></i> Melhores Jogadores</h2>
+                <button onClick={() => setShowRanking(false)} className="text-gray-500 hover:text-white"><i className="fas fa-times"></i></button>
+              </div>
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
+                {leaderboard.map((u, idx) => (
+                  <div key={u.id} className={`flex items-center justify-between p-3 rounded-lg ${u.id === currentUser.id ? 'bg-[#81b64c]/20 border border-[#81b64c]/30' : 'bg-[#1a1917]'}`}>
+                    <div className="flex items-center gap-3">
+                      <span className={`w-6 text-center font-bold ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-gray-300' : idx === 2 ? 'text-amber-600' : 'text-gray-600'}`}>
+                        {idx + 1}
+                      </span>
+                      <img src={u.avatar} className="w-8 h-8 rounded" />
+                      <span className="font-medium text-sm">{u.name}</span>
+                    </div>
+                    <span className="font-mono font-bold text-[#81b64c]">{u.elo}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-6 p-4 bg-[#1a1917] rounded-xl text-center border border-white/5">
+                <div className="text-xs text-gray-500 uppercase font-bold mb-1">Sua Posição</div>
+                <div className="text-xl font-bold">ELO {currentUser.elo}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* MODAL CONVITE */}
         {isWaiting && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[100] p-4">
             <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-sm text-center border border-white/10 shadow-2xl">
-              <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i className="fas fa-link text-[#81b64c] text-2xl"></i>
+              <div className="w-16 h-16 bg-[#81b64c]/20 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+                <i className="fas fa-share-alt text-[#81b64c] text-2xl"></i>
               </div>
-              <h2 className="text-xl font-bold mb-2">Convidar Amigo</h2>
-              <p className="text-gray-400 text-xs mb-6">Compartilhe o link abaixo para começar a partida.</p>
-              
-              <div className="bg-[#1a1917] p-3 rounded mb-6 text-xs font-mono text-[#81b64c] break-all border border-white/5">
+              <h2 className="text-xl font-bold mb-2">Convidar Oponente</h2>
+              <p className="text-gray-400 text-xs mb-6">Envie este link. O primeiro a entrar joga, os outros assistem.</p>
+              <div className="bg-[#1a1917] p-3 rounded mb-6 text-xs font-mono text-[#81b64c] break-all border border-white/5 select-all">
                 {window.location.origin}/?room={onlineRoom}
               </div>
-              
-              <button 
-                onClick={copyInviteLink} 
-                className={`w-full py-4 rounded-xl font-bold mb-2 transition-all ${copyStatus === 'Copiado!' ? 'bg-[#81b64c]' : 'bg-[#3c3a37] hover:bg-[#4a4844]'}`}
-              >
-                {copyStatus === 'Copiado!' ? <><i className="fas fa-check mr-2"></i> LINK COPIADO</> : 'COPIAR LINK'}
+              <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/?room=${onlineRoom}`); setCopyStatus('Copiado!'); setTimeout(() => setCopyStatus('Copiar'), 2000); }} 
+                className={`w-full py-4 rounded-xl font-bold mb-2 transition-all ${copyStatus === 'Copiado!' ? 'bg-[#81b64c]' : 'bg-[#3c3a37]'}`}>
+                {copyStatus === 'Copiado!' ? 'LINK COPIADO!' : 'COPIAR LINK'}
               </button>
-              
-              <button onClick={() => { setGameMode(GameMode.LOCAL); setOnlineRoom(null); setIsWaiting(false); }} className="mt-2 text-gray-500 text-xs font-bold uppercase hover:text-white">
-                Cancelar
-              </button>
+              <button onClick={() => { setOnlineRoom(null); setGameMode(GameMode.LOCAL); setIsWaiting(false); }} className="text-gray-500 text-xs font-bold uppercase mt-4">Cancelar</button>
             </div>
           </div>
         )}
 
         {/* MODAL FIM DE JOGO */}
         {gameOver && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[130] p-4">
             <div className="bg-[#262421] p-10 rounded-2xl text-center shadow-2xl max-w-sm w-full border border-white/10">
               <div className="text-5xl mb-4">🏁</div>
               <h2 className="text-2xl font-bold mb-2">Fim de Jogo</h2>
               <p className="text-gray-400 mb-8">{gameOver}</p>
-              <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-lg">NOVA PARTIDA</button>
+              <button onClick={() => window.location.assign(window.location.origin)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold text-white shadow-lg">VOLTAR AO INÍCIO</button>
             </div>
           </div>
         )}
 
-        {/* MODAL PERFIL */}
+        {/* PERFIL */}
         {showProfileModal && (
           <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[110] p-4">
             <div className="bg-[#262421] p-8 rounded-2xl w-full max-w-md border border-white/10 shadow-2xl">
-              <h2 className="text-2xl font-bold mb-6">Seu Perfil</h2>
+              <h2 className="text-2xl font-bold mb-6">Editar Perfil</h2>
               <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Nome de Usuário</label>
-                  <input 
-                    value={currentUser.name} 
-                    onChange={e => setCurrentUser({...currentUser, name: e.target.value})} 
-                    className="w-full bg-[#1a1917] border border-[#3c3a37] p-4 rounded-lg mt-1 outline-none focus:border-[#81b64c]" 
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Avatar</label>
-                  <div className="flex gap-4 mt-2 items-center">
-                    <img src={currentUser.avatar} className="w-20 h-20 rounded-xl shadow-lg border border-white/10" />
-                    <button onClick={() => setCurrentUser({...currentUser, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`})} className="bg-[#3c3a37] px-4 py-2 rounded-lg text-sm font-bold hover:bg-[#4a4844]">Gerar Novo</button>
-                  </div>
+                <input value={currentUser.name} onChange={e => setCurrentUser({...currentUser, name: e.target.value})} className="w-full bg-[#1a1917] border border-[#3c3a37] p-4 rounded-lg mt-1 outline-none focus:border-[#81b64c]" placeholder="Nome" />
+                <div className="flex gap-4 mt-2 items-center">
+                  <img src={currentUser.avatar} className="w-20 h-20 rounded-xl border border-white/10" />
+                  <button onClick={() => setCurrentUser({...currentUser, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`})} className="bg-[#3c3a37] px-4 py-2 rounded-lg text-sm font-bold">Novo Avatar</button>
                 </div>
               </div>
-              <button onClick={() => setShowProfileModal(false)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold mt-8 shadow-lg active:scale-95 transition-transform">SALVAR</button>
+              <button onClick={() => setShowProfileModal(false)} className="w-full bg-[#81b64c] py-4 rounded-xl font-bold mt-8">SALVAR</button>
             </div>
           </div>
         )}

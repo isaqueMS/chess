@@ -35,13 +35,13 @@ const IndustrialTile: React.FC<{
   const renderDots = (n: number) => {
     const dotPos = [[], [4], [0, 8], [0, 4, 8], [0, 2, 6, 8], [0, 2, 4, 6, 8], [0, 2, 3, 5, 6, 8]][n];
     return (
-      <div className={`grid grid-cols-3 grid-rows-3 gap-[1px] md:gap-[1.5px] w-full h-full ${size === 'xl' ? 'p-2 md:p-3' : 'p-1.5 md:p-2'}`}>
+      <div className={`grid grid-cols-3 grid-rows-3 gap-[1px] md:gap-[1.5px] w-full h-full ${size === 'xl' ? 'p-1.5 md:p-3' : 'p-1 md:p-2'}`}>
         {[...Array(9)].map((_, i) => (
           <div key={i} className="flex items-center justify-center">
             {dotPos.includes(i) && (
               <div className={`rounded-full transition-all duration-300 
                 ${highlight && !disabled ? 'bg-[#a3e635] shadow-[0_0_12px_#a3e635]' : 'bg-[#81b64c] shadow-[0_0_8px_rgba(129,182,76,0.6)]'} 
-                ${size === 'sm' ? 'w-1 h-1' : size === 'md' ? 'w-1.5 h-1.5' : size === 'xl' ? 'w-2.5 h-2.5 md:w-4 md:h-4' : 'w-2 h-2'}`} 
+                ${size === 'sm' ? 'w-1 h-1' : size === 'md' ? 'w-1.5 h-1.5' : size === 'xl' ? 'w-2 h-2 md:w-4 md:h-4' : 'w-2 h-2'}`} 
               />
             )}
           </div>
@@ -54,17 +54,17 @@ const IndustrialTile: React.FC<{
   const isHorizontal = isBoardPiece ? !isBucha : true;
 
   const dims = {
-    sm: isHorizontal ? 'w-12 h-6 md:w-16 md:h-8' : 'w-6 h-12 md:w-8 md:h-16',
-    md: isHorizontal ? 'w-20 h-10 md:w-24 md:h-12' : 'w-10 h-20 md:w-12 md:h-24',
-    lg: isHorizontal ? 'w-24 h-12 md:w-28 md:h-14' : 'w-12 h-24 md:w-14 md:h-28',
-    xl: isHorizontal ? 'w-32 h-16 md:w-40 md:h-20' : 'w-16 h-32 md:w-20 md:h-40',
+    sm: isHorizontal ? 'w-10 h-5 md:w-16 md:h-8' : 'w-5 h-10 md:w-8 md:h-16',
+    md: isHorizontal ? 'w-14 h-7 md:w-24 md:h-12' : 'w-7 h-14 md:w-12 md:h-24',
+    lg: isHorizontal ? 'w-18 h-9 md:w-28 md:h-14' : 'w-9 h-18 md:w-14 md:h-28',
+    xl: isHorizontal ? 'w-24 h-12 md:w-40 md:h-20' : 'w-12 h-24 md:w-20 md:h-40',
   }[size];
 
   return (
     <div 
       onClick={!disabled ? onClick : undefined}
       className={`relative flex ${isHorizontal ? 'flex-row' : 'flex-col'} transition-all duration-300 shrink-0 border-[1.5px]
-        ${!disabled ? 'cursor-pointer hover:border-[#a3e635] hover:-translate-y-2 md:hover:-translate-y-4 hover:scale-105 active:scale-95 z-10' : 'cursor-default opacity-90'} 
+        ${!disabled ? 'cursor-pointer hover:border-[#a3e635] active:scale-95 z-10' : 'cursor-default opacity-90'} 
         ${dims}
         ${isBoardPiece ? 'rounded shadow-md border-white/20' : 'rounded-lg md:rounded-xl shadow-2xl border-white/30'}
         ${highlight && !disabled ? 'ring-2 ring-[#a3e635] border-[#a3e635] shadow-[0_0_20px_rgba(163,230,53,0.3)]' : ''}
@@ -78,15 +78,15 @@ const IndustrialTile: React.FC<{
         {renderDots(a)}
       </div>
       
-      <div className={`${isHorizontal ? 'w-[1.5px] h-3/4 my-auto' : 'h-[1.5px] w-3/4 mx-auto'} bg-[#333] relative z-10 opacity-40`} />
+      <div className={`${isHorizontal ? 'w-[1px] h-3/4 my-auto' : 'h-[1px] w-3/4 mx-auto'} bg-[#333] relative z-10 opacity-40`} />
       
       <div className={`${isHorizontal ? 'flex-1 h-full' : 'w-full h-1/2'} flex items-center justify-center z-10 overflow-hidden`}>
         {renderDots(b)}
       </div>
       
-      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ${size === 'xl' ? 'w-4 h-4 md:w-6 md:h-6' : 'w-3 h-3 md:w-4 md:h-4'} bg-[#262626] rounded-full border border-white/20 shadow-lg z-20 flex items-center justify-center`}>
-         <div className={`rounded-full bg-[#111] border border-white/5 ${size === 'xl' ? 'w-2 h-2 md:w-3 md:h-3' : 'w-1.5 h-1.5 md:w-2 md:h-2'}`}>
-            <div className={`m-auto bg-[#81b64c]/20 rounded-full ${size === 'xl' ? 'w-1 h-1 md:w-1.5 md:h-1.5' : 'w-0.5 h-0.5 md:w-1 md:h-1'}`} />
+      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ${size === 'xl' ? 'w-3 h-3 md:w-6 md:h-6' : 'w-2.5 h-2.5 md:w-4 md:h-4'} bg-[#262626] rounded-full border border-white/20 shadow-lg z-20 flex items-center justify-center`}>
+         <div className={`rounded-full bg-[#111] border border-white/5 ${size === 'xl' ? 'w-1.5 h-1.5 md:w-3 md:h-3' : 'w-1 h-1 md:w-2 md:h-2'}`}>
+            <div className={`m-auto bg-[#81b64c]/20 rounded-full ${size === 'xl' ? 'w-0.5 h-0.5 md:w-1.5 md:h-1.5' : 'w-0.5 h-0.5 md:w-1 md:h-1'}`} />
          </div>
       </div>
     </div>
@@ -131,13 +131,15 @@ const DominoGame: React.FC<{ currentUser: User }> = ({ currentUser }) => {
 
   useEffect(() => {
     if (boardRef.current && gameState?.board) {
-      const { scrollWidth, clientWidth } = boardRef.current;
-      boardRef.current.scrollTo({
-        left: scrollWidth - clientWidth / 2,
-        behavior: 'smooth'
-      });
+      setTimeout(() => {
+        const { scrollWidth, clientWidth } = boardRef.current!;
+        boardRef.current!.scrollTo({
+          left: (scrollWidth - clientWidth) / 2,
+          behavior: 'smooth'
+        });
+      }, 150);
     }
-  }, [gameState?.board?.length]);
+  }, [gameState?.board?.length, gameState?.status]);
 
   const createRoom = () => {
     const id = Math.random().toString(36).substr(2, 6).toUpperCase();
@@ -337,146 +339,150 @@ const DominoGame: React.FC<{ currentUser: User }> = ({ currentUser }) => {
   const chatMessages: DominoChatMessage[] = gameState?.chat ? Object.values(gameState.chat) : [];
 
   if (!roomId) return (
-    <div className="flex flex-col items-center justify-center h-full gap-8 md:gap-12 bg-[#1a1917] w-full max-w-4xl rounded-[2rem] md:rounded-[4rem] border border-white/5 shadow-2xl p-6 md:p-12 animate-in zoom-in duration-500">
-      <div className="text-center">
-        <h1 className="text-5xl md:text-7xl font-black italic tracking-tighter text-white mb-2 md:mb-4 uppercase">Carbon <span className="text-[#81b64c]">Core</span></h1>
-        <p className="text-gray-500 uppercase text-[10px] md:text-xs font-bold tracking-[0.2em] max-w-xs mx-auto">SISTEMA DE DOMINÓ INDUSTRIAL</p>
+    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] gap-6 md:gap-12 bg-[#1a1917] w-full max-w-4xl rounded-3xl md:rounded-[4rem] border border-white/5 shadow-2xl p-6 md:p-12 animate-in zoom-in duration-500 mx-auto text-center">
+      <div className="mb-4">
+        <h1 className="text-4xl md:text-7xl font-black italic tracking-tighter text-white mb-2 md:mb-4 uppercase leading-none">Carbon <span className="text-[#81b64c]">Core</span></h1>
+        <p className="text-gray-500 uppercase text-[9px] md:text-xs font-bold tracking-[0.2em] max-w-xs mx-auto">SISTEMA DE DOMINÓ INDUSTRIAL</p>
       </div>
-      <button onClick={createRoom} className="bg-[#81b64c] hover:bg-[#95c65d] px-12 md:px-20 py-4 md:py-6 rounded-2xl md:rounded-3xl font-black text-lg md:text-xl shadow-[0_8px_0_#456528] active:translate-y-1 transition-all uppercase tracking-widest text-white">CRIAR SALA TÁTICA</button>
+      <button onClick={createRoom} className="bg-[#81b64c] hover:bg-[#95c65d] w-full max-w-[280px] py-4 md:py-6 rounded-2xl md:rounded-3xl font-black text-base md:text-xl shadow-[0_6px_0_#456528] md:shadow-[0_8px_0_#456528] active:translate-y-1 transition-all uppercase tracking-widest text-white">CRIAR SALA TÁTICA</button>
     </div>
   );
 
   return (
-    <div className="flex flex-col lg:flex-row h-full w-full max-w-[1600px] gap-4 md:gap-6 overflow-hidden pb-24 lg:pb-12 px-2 md:px-4 relative animate-in fade-in duration-700">
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden min-h-0">
-        <div className="bg-[#262421] px-4 md:px-6 py-3 md:py-4 rounded-[1.5rem] md:rounded-[2.5rem] border border-white/5 shadow-2xl flex flex-wrap items-center justify-between gap-2 z-20">
-          <div className="flex items-center gap-2 md:gap-4">
-            <div className="bg-[#1a1917] px-3 md:px-5 py-2 md:py-2.5 rounded-xl md:rounded-2xl border border-[#81b64c]/30 text-[#81b64c] font-black font-mono shadow-inner text-[10px] md:text-sm flex items-center gap-2 md:gap-3">
-              <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-[#81b64c] rounded-full animate-pulse" />
-              <span className="opacity-40 select-none uppercase hidden sm:inline">Node:</span> {roomId}
+    <div className="flex flex-col lg:flex-row h-full w-full max-w-[1600px] gap-2 md:gap-6 overflow-hidden pb-24 md:pb-12 px-1 md:px-4 relative animate-in fade-in duration-700 min-h-[calc(100vh-100px)]">
+      <div className="flex-1 flex flex-col gap-2 md:gap-4 overflow-hidden min-h-0">
+        
+        {/* Top Info Bar */}
+        <div className="bg-[#262421] px-3 md:px-6 py-2 md:py-4 rounded-xl md:rounded-[2.5rem] border border-white/5 shadow-xl flex items-center justify-between gap-2 z-20">
+          <div className="flex items-center gap-2">
+            <div className="bg-[#1a1917] px-2 md:px-5 py-1.5 md:py-2.5 rounded-lg md:rounded-2xl border border-[#81b64c]/30 text-[#81b64c] font-black font-mono shadow-inner text-[10px] md:text-sm flex items-center gap-1.5 md:gap-3">
+              <div className="w-1.5 h-1.5 bg-[#81b64c] rounded-full animate-pulse" />
+              <span className="opacity-40 select-none uppercase hidden xs:inline">Node:</span> {roomId}
             </div>
-            <button onClick={copyInviteLink} className={`p-2 md:p-3 rounded-xl md:rounded-2xl transition-all shadow-lg ${copied ? 'bg-[#81b64c] text-white' : 'bg-[#3c3a37] text-gray-300 hover:bg-[#4a4844]'}`}>
-              <i className={`fas ${copied ? 'fa-check' : 'fa-link'} text-sm md:text-base`}></i>
+            <button onClick={copyInviteLink} className={`p-1.5 md:p-3 rounded-lg md:rounded-2xl transition-all shadow-lg ${copied ? 'bg-[#81b64c] text-white' : 'bg-[#3c3a37] text-gray-300 hover:bg-[#4a4844]'}`}>
+              <i className={`fas ${copied ? 'fa-check' : 'fa-link'} text-xs md:text-base`}></i>
             </button>
           </div>
-          <div className="flex items-center gap-2 md:gap-3">
-             <div className="bg-black/40 px-3 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest border border-white/5">
-                Dormitório: {boneyard.length}
-             </div>
-             <div className="bg-[#81b64c]/10 px-3 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-black text-[#81b64c] uppercase tracking-widest border border-[#81b64c]/20">
-                {gameMode === 'individual' ? 'Solo' : 'Duplas'}
+          <div className="flex items-center gap-2">
+             <div className="bg-black/40 px-2 md:px-5 py-1.5 md:py-2.5 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest border border-white/5">
+                Boneyard: {boneyard.length}
              </div>
           </div>
         </div>
 
-        <div className="flex-1 bg-[#0d0d0d] rounded-[2rem] md:rounded-[3.5rem] border-[8px] md:border-[14px] border-[#262421] relative shadow-inner overflow-hidden flex flex-col min-h-[300px] md:min-h-0">
+        {/* Board Display Area */}
+        <div className="flex-1 bg-[#0d0d0d] rounded-2xl md:rounded-[3.5rem] border-[4px] md:border-[14px] border-[#262421] relative shadow-inner overflow-hidden flex flex-col min-h-[260px] md:min-h-0">
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none" 
-               style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '40px 40px md:60px 60px' }} />
+               style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '30px 30px md:60px 60px' }} />
           
           {gameState?.status === 'waiting' ? (
-            <div className="h-full flex flex-col items-center justify-center p-4 md:p-10 z-10">
-              <div className="flex flex-col items-center gap-4 md:gap-8 bg-[#1a1917] p-6 md:p-12 rounded-[2rem] md:rounded-[3.5rem] border border-white/5 shadow-2xl max-w-lg w-full">
-                <h2 className="text-lg md:text-2xl font-black text-white/40 uppercase tracking-[0.2em] md:tracking-[0.4em] mb-2 md:mb-4">Protocolo de Espera</h2>
-                <div className="flex w-full gap-2 p-1 md:p-2 bg-black/50 rounded-xl md:rounded-2xl">
-                  <button onClick={() => toggleMode('individual')} className={`flex-1 py-3 md:py-4 rounded-lg md:rounded-xl font-black text-[10px] md:text-xs uppercase tracking-widest transition-all ${gameMode === 'individual' ? 'bg-[#81b64c] text-white' : 'text-gray-600'}`}>Solo</button>
-                  <button onClick={() => toggleMode('teams')} className={`flex-1 py-3 md:py-4 rounded-lg md:rounded-xl font-black text-[10px] md:text-xs uppercase tracking-widest transition-all ${gameMode === 'teams' ? 'bg-[#81b64c] text-white' : 'text-gray-600'}`}>Duplas</button>
+            <div className="h-full flex flex-col items-center justify-center p-4 z-10 flex-grow">
+              <div className="flex flex-col items-center gap-4 bg-[#1a1917] p-6 rounded-2xl md:rounded-[3.5rem] border border-white/5 shadow-2xl max-w-sm w-full">
+                <h2 className="text-base md:text-2xl font-black text-white/40 uppercase tracking-widest mb-2 text-center">Aguardando Players</h2>
+                <div className="flex w-full gap-2 p-1 bg-black/50 rounded-xl mb-4">
+                  <button onClick={() => toggleMode('individual')} className={`flex-1 py-2 md:py-4 rounded-lg font-black text-[9px] md:text-xs uppercase tracking-widest transition-all ${gameMode === 'individual' ? 'bg-[#81b64c] text-white' : 'text-gray-600'}`}>Solo</button>
+                  <button onClick={() => toggleMode('teams')} className={`flex-1 py-2 md:py-4 rounded-lg font-black text-[9px] md:text-xs uppercase tracking-widest transition-all ${gameMode === 'teams' ? 'bg-[#81b64c] text-white' : 'text-gray-600'}`}>Duplas</button>
                 </div>
-                <div className="flex items-center gap-2 md:gap-3">
+                <div className="flex items-center gap-2 mb-4">
                   {players.map(p => (
-                    <img key={p.id} src={p.avatar} className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl border-2 border-white/10 shadow-xl" alt="op" />
+                    <img key={p.id} src={p.avatar} className="w-8 h-8 md:w-12 md:h-12 rounded-lg md:rounded-2xl border-2 border-white/10" alt="op" />
                   ))}
                 </div>
                 <button 
                   onClick={startMatch} 
                   disabled={(gameMode === 'individual' && players.length < 2) || (gameMode === 'teams' && players.length !== 4)}
-                  className="w-full bg-[#81b64c] disabled:opacity-30 hover:bg-[#95c65d] py-4 md:py-6 rounded-xl md:rounded-2xl font-black text-lg md:text-xl shadow-[0_6px_0_#456528] active:translate-y-1 transition-all uppercase text-white"
+                  className="w-full bg-[#81b64c] disabled:opacity-30 hover:bg-[#95c65d] py-3 md:py-6 rounded-xl md:rounded-2xl font-black text-sm md:text-xl shadow-[0_5px_0_#456528] active:translate-y-1 transition-all uppercase text-white"
                 >
-                  INICIAR
+                  INICIAR PARTIDA
                 </button>
               </div>
             </div>
           ) : (
-            <div ref={boardRef} className="flex-1 flex items-center gap-3 md:gap-6 px-12 md:px-48 py-10 md:py-20 overflow-x-auto overflow-y-hidden w-full no-scrollbar custom-scrollbar scroll-smooth z-10">
-              <div className="flex-shrink-0 w-[40%]" />
+            <div ref={boardRef} className="flex-1 flex items-center gap-2 md:gap-6 px-16 md:px-48 py-8 md:py-20 overflow-x-auto overflow-y-hidden w-full no-scrollbar custom-scrollbar scroll-smooth z-10 flex-grow h-full">
+              <div className="flex-shrink-0 w-[25%] md:w-[45%]" />
               {(gameState?.board || []).map((m, i) => (
-                <div key={`${m.tile.id}-${i}`} className="animate-in zoom-in slide-in-from-right-20 duration-500 flex-shrink-0 flex items-center justify-center">
+                <div key={`${m.tile.id}-${i}`} className="animate-in zoom-in slide-in-from-right-10 duration-500 flex-shrink-0 flex items-center justify-center">
                   <IndustrialTile tile={m.tile} isFlipped={m.isFlipped} isBoardPiece size="md" />
                 </div>
               ))}
-              <div className="flex-shrink-0 w-[40%]" />
+              <div className="flex-shrink-0 w-[25%] md:w-[45%]" />
             </div>
           )}
 
+          {/* Decision Overlays */}
           {pendingSelection && (
-            <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center animate-in fade-in duration-300">
-               <h3 className="text-xl md:text-3xl font-black text-[#81b64c] uppercase tracking-[0.2em] md:tracking-[0.4em] mb-12 md:mb-20 italic">DIRECIONAR FLUXO</h3>
-               <div className="flex gap-10 md:gap-20">
+            <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300 p-4">
+               <h3 className="text-lg md:text-3xl font-black text-[#81b64c] uppercase tracking-widest mb-10 md:mb-20 italic">LADO DA JOGADA</h3>
+               <div className="flex gap-8 md:gap-20">
                  {pendingSelection.options.map((opt, i) => (
-                   <button key={i} onClick={() => executeMove(pendingSelection.tile, opt)} className="group flex flex-col items-center gap-4 md:gap-8">
-                      <div className="w-24 h-24 md:w-40 md:h-40 bg-[#262421] rounded-[2rem] md:rounded-[3rem] flex items-center justify-center border-4 border-white/5 group-hover:border-[#a3e635] group-hover:bg-[#a3e635]/10 transition-all shadow-2xl group-active:scale-90">
-                        <i className={`fas fa-chevron-${opt.side === 'left' ? 'left' : 'right'} text-4xl md:text-6xl text-white/10 group-hover:text-[#a3e635] transition-colors`}></i>
+                   <button key={i} onClick={() => executeMove(pendingSelection.tile, opt)} className="group flex flex-col items-center gap-4">
+                      <div className="w-20 h-20 md:w-40 md:h-40 bg-[#262421] rounded-2xl md:rounded-[3rem] flex items-center justify-center border-4 border-white/5 group-hover:border-[#a3e635] group-active:scale-90 transition-all shadow-2xl">
+                        <i className={`fas fa-chevron-${opt.side === 'left' ? 'left' : 'right'} text-3xl md:text-6xl text-white/10 group-hover:text-[#a3e635]`}></i>
                       </div>
-                      <span className="text-[9px] md:text-[11px] font-black text-gray-500 uppercase tracking-[0.2em] md:tracking-[0.3em] group-hover:text-[#a3e635]">TERMINAL {opt.side.toUpperCase()}</span>
+                      <span className="text-[8px] md:text-[11px] font-black text-gray-500 uppercase tracking-widest group-hover:text-[#a3e635]">{opt.side.toUpperCase()}</span>
                    </button>
                  ))}
                </div>
-               <button onClick={() => setPendingSelection(null)} className="mt-12 md:mt-24 text-gray-600 hover:text-white font-black uppercase text-[9px] md:text-[11px] tracking-widest border-b border-white/10 pb-1">ABORTAR</button>
+               <button onClick={() => setPendingSelection(null)} className="mt-10 md:mt-24 text-gray-600 hover:text-white font-black uppercase text-[9px] md:text-[11px] tracking-widest border-b border-white/10 pb-1">ABORTAR</button>
             </div>
           )}
 
+          {/* End Game Overlay */}
           {gameState?.status === 'finished' && (
-            <div className="absolute inset-0 z-[100] bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-center p-6 md:p-12 animate-in zoom-in duration-500 text-center">
-               <div className="w-16 h-16 md:w-28 md:h-28 bg-[#81b64c] rounded-[1.5rem] md:rounded-[2.5rem] flex items-center justify-center mb-6 md:mb-12 shadow-[0_0_80px_rgba(129,182,76,0.5)]">
+            <div className="absolute inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-6 animate-in zoom-in duration-500 text-center">
+               <div className="w-16 h-16 md:w-28 md:h-28 bg-[#81b64c] rounded-2xl md:rounded-[2.5rem] flex items-center justify-center mb-6 md:mb-12 shadow-[0_0_80px_rgba(129,182,76,0.5)]">
                  <i className={`fas ${gameState.isLocked ? 'fa-lock' : 'fa-flag-checkered'} text-3xl md:text-5xl text-white`}></i>
                </div>
-               <h2 className="text-3xl md:text-6xl font-black text-white italic tracking-tighter uppercase mb-2 md:mb-4">
-                 {gameState.isLocked ? 'SISTEMA TRANCADO' : 'SISTEMA DOMINADO'}
+               <h2 className="text-2xl md:text-6xl font-black text-white italic tracking-tighter uppercase mb-2">
+                 {gameState.isLocked ? 'SISTEMA TRANCADO' : 'PARTIDA ENCERRADA'}
                </h2>
-               <div className="flex flex-col gap-1 md:gap-2 mb-8 md:mb-16">
-                 <p className="text-[#81b64c] text-lg md:text-2xl font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">VENCEDOR: {players.find(p => p.id === gameState.winnerId)?.name}</p>
+               <div className="flex flex-col gap-1 mb-8 md:mb-16">
+                 <p className="text-[#81b64c] text-sm md:text-2xl font-black uppercase tracking-widest">VENCEDOR: {players.find(p => p.id === gameState.winnerId)?.name}</p>
                  {gameState.mode === 'teams' && (
-                   <div className="bg-blue-500/10 text-blue-400 px-4 md:px-8 py-2 md:py-3 rounded-full border border-blue-500/20 text-[10px] md:text-sm font-black uppercase tracking-widest self-center mt-2">TIME {gameState.winningTeam === 0 ? 'ALFA (1&3)' : 'BETA (2&4)'}</div>
+                   <div className="bg-blue-500/10 text-blue-400 px-4 py-1.5 rounded-full border border-blue-500/20 text-[9px] md:text-sm font-black uppercase tracking-widest self-center mt-2">TIME {gameState.winningTeam === 0 ? 'ALFA (1&3)' : 'BETA (2&4)'}</div>
                  )}
                </div>
-               <button onClick={startMatch} className="bg-[#81b64c] hover:bg-[#95c65d] px-12 md:px-24 py-4 md:py-7 rounded-2xl md:rounded-3xl font-black text-lg md:text-2xl shadow-[0_6px_0_#456528] md:shadow-[0_10px_0_#456528] active:translate-y-1 transition-all uppercase tracking-widest text-white">REINICIAR</button>
+               <button onClick={startMatch} className="bg-[#81b64c] hover:bg-[#95c65d] px-10 md:px-24 py-4 md:py-7 rounded-xl md:rounded-3xl font-black text-base md:text-2xl shadow-[0_6px_0_#456528] active:translate-y-1 transition-all uppercase text-white">REINICIAR</button>
             </div>
           )}
         </div>
 
-        <div className={`bg-[#262421] p-6 md:p-10 rounded-[2.5rem] md:rounded-[4rem] border-t-[6px] md:border-t-[10px] shadow-2xl transition-all duration-700 ${isMyTurn ? 'border-[#a3e635] bg-[#2a2825]' : 'border-[#1a1917]'}`}>
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-6">
-            <div className="flex items-center gap-4 md:gap-8">
+        {/* Player Controls & Hand */}
+        <div className={`bg-[#262421] p-3 md:p-10 rounded-2xl md:rounded-[4rem] border-t-[4px] md:border-t-[10px] shadow-2xl transition-all duration-700 ${isMyTurn ? 'border-[#a3e635] bg-[#2a2825] ring-2 ring-[#a3e635]/10' : 'border-[#1a1917]'}`}>
+          <div className="flex items-center justify-between gap-3 mb-3 md:mb-6">
+            <div className="flex items-center gap-3 md:gap-8">
                <div className="relative">
-                 <img src={currentUser.avatar} className="w-12 h-12 md:w-20 md:h-20 rounded-xl md:rounded-[2rem] border-2 md:border-4 border-white/10 shadow-2xl" alt="op" />
-                 {isMyTurn && <div className="absolute -top-2 -right-2 w-6 h-6 md:w-9 md:h-9 bg-[#a3e635] rounded-full flex items-center justify-center animate-bounce shadow-[0_0_20px_#a3e635] border-2 md:border-4 border-[#262421]"><i className="fas fa-bolt text-[8px] md:text-xs text-white"></i></div>}
+                 <img src={currentUser.avatar} className="w-10 h-10 md:w-20 md:h-20 rounded-lg md:rounded-[2rem] border-2 border-white/10 shadow-lg" alt="op" />
+                 {isMyTurn && <div className="absolute -top-1 -right-1 w-5 h-5 md:w-9 md:h-9 bg-[#a3e635] rounded-full flex items-center justify-center animate-bounce shadow-[0_0_20px_#a3e635] border-2 border-[#262421]"><i className="fas fa-bolt text-[7px] md:text-xs text-white"></i></div>}
                </div>
                <div className="flex flex-col">
-                 <h3 className="font-black text-lg md:text-2xl text-white tracking-tighter uppercase italic">Arsenal</h3>
-                 <div className="flex items-center gap-2 md:gap-3 mt-1">
-                   <div className={`w-2 h-2 md:w-3 md:h-3 rounded-full ${isMyTurn ? 'bg-[#a3e635] animate-pulse shadow-[0_0_12px_#a3e635]' : 'bg-gray-700'}`} />
-                   <span className={`text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] ${isMyTurn ? 'text-[#a3e635]' : 'text-gray-600'}`}>
+                 <h3 className={`font-black text-sm md:text-2xl tracking-tighter uppercase italic ${isMyTurn ? 'text-[#a3e635]' : 'text-white'}`}>Arsenal</h3>
+                 <div className="flex items-center gap-1.5 md:gap-3 mt-0.5">
+                   <div className={`w-1.5 h-1.5 md:w-3 md:h-3 rounded-full ${isMyTurn ? 'bg-[#a3e635] animate-pulse' : 'bg-gray-700'}`} />
+                   <span className={`text-[7px] md:text-[10px] font-black uppercase tracking-widest ${isMyTurn ? 'text-[#a3e635]' : 'text-gray-600'}`}>
                      {isMyTurn ? 'SINCRONIZADO' : 'STANDBY'}
                    </span>
                  </div>
                </div>
             </div>
 
-            <div className="flex gap-2 w-full md:w-auto">
-              <button disabled={!isMyTurn || boneyard.length === 0 || canIPlay} onClick={drawTile} className={`flex-1 md:flex-none h-12 md:h-16 px-4 md:px-10 rounded-xl md:rounded-2xl font-black text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 md:gap-4 border-2 ${(!isMyTurn || boneyard.length === 0 || canIPlay) ? 'bg-[#1a1917] border-transparent text-gray-700 opacity-40 cursor-not-allowed' : 'bg-[#3c3a37] border-white/5 text-white hover:bg-[#4a4844] shadow-2xl'}`}>
-                <i className="fas fa-plus-square text-base md:text-xl"></i> COMPRAR
+            <div className="flex gap-2">
+              <button disabled={!isMyTurn || boneyard.length === 0 || canIPlay} onClick={drawTile} className={`h-10 md:h-16 px-4 md:px-10 rounded-lg md:rounded-2xl font-black text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 border-2 ${(!isMyTurn || boneyard.length === 0 || canIPlay) ? 'bg-[#1a1917] border-transparent text-gray-700 opacity-40 cursor-not-allowed' : 'bg-[#3c3a37] border-white/5 text-white shadow-lg'}`}>
+                <i className="fas fa-plus-square"></i> <span className="hidden xs:inline">COMPRAR</span>
               </button>
-              <button disabled={!isMyTurn || boneyard.length > 0 || canIPlay} onClick={passTurn} className={`flex-1 md:flex-none h-12 md:h-16 px-4 md:px-10 rounded-xl md:rounded-2xl font-black text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 md:gap-4 border-2 ${(!isMyTurn || boneyard.length > 0 || canIPlay) ? 'bg-[#1a1917] border-transparent text-gray-700 opacity-40 cursor-not-allowed' : 'bg-red-500/10 border-red-500/20 text-red-500 hover:bg-red-500 shadow-2xl'}`}>
-                <i className="fas fa-forward text-base md:text-xl"></i> PASSAR
+              <button disabled={!isMyTurn || boneyard.length > 0 || canIPlay} onClick={passTurn} className={`h-10 md:h-16 px-4 md:px-10 rounded-lg md:rounded-2xl font-black text-[9px] md:text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 border-2 ${(!isMyTurn || boneyard.length > 0 || canIPlay) ? 'bg-[#1a1917] border-transparent text-gray-700 opacity-40 cursor-not-allowed' : 'bg-red-500/10 border-red-500/20 text-red-500 shadow-lg'}`}>
+                <i className="fas fa-forward"></i> <span className="hidden xs:inline">PASSAR</span>
               </button>
             </div>
           </div>
 
-          <div className="bg-black/80 rounded-[1.5rem] md:rounded-[3rem] p-4 md:p-10 border border-white/5 shadow-inner min-h-[180px] md:min-h-[260px] flex items-center gap-4 md:gap-10 overflow-x-auto no-scrollbar custom-scrollbar relative">
+          {/* User Hand Pieces */}
+          <div className="bg-black/60 rounded-xl md:rounded-[3rem] p-3 md:p-10 border border-white/5 shadow-inner min-h-[140px] md:min-h-[260px] flex items-center gap-3 md:gap-10 overflow-x-auto no-scrollbar custom-scrollbar relative">
             {myHand.length === 0 && gameState?.status === 'playing' ? (
-              <div className="flex-1 text-center py-6 md:py-10 opacity-10 font-black uppercase tracking-[1em] md:tracking-[2em] text-[10px] md:text-sm text-white">Arsenal Esgotado</div>
+              <div className="flex-1 text-center py-4 opacity-10 font-black uppercase tracking-[0.5em] text-[9px] md:text-sm text-white">Arsenal Vazio</div>
             ) : (
               myHand.map((t) => (
-                <div key={t.id} className="transition-all duration-300">
+                <div key={t.id} className="transition-all duration-300 transform md:scale-100 scale-90 origin-center">
                   <IndustrialTile 
                     tile={t} 
                     onClick={() => handlePlay(t)} 
@@ -491,20 +497,22 @@ const DominoGame: React.FC<{ currentUser: User }> = ({ currentUser }) => {
         </div>
       </div>
 
-      <div className="w-full lg:w-[400px] flex flex-col gap-4 min-h-0">
-         <div className="bg-[#262421] p-4 md:p-8 rounded-[1.5rem] md:rounded-[3rem] border border-white/5 shadow-2xl">
-           <h4 className="text-[8px] md:text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 md:mb-8 px-2">UNIDADES EM CAMPO</h4>
-           <div className="flex flex-row lg:flex-col gap-2 md:gap-4 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 no-scrollbar">
+      {/* Side Panel (Players & Chat) */}
+      <div className="w-full lg:w-[360px] flex flex-col gap-2 md:gap-4 min-h-0">
+         
+         {/* Players Status */}
+         <div className="bg-[#262421] p-3 md:p-6 rounded-xl md:rounded-[2.5rem] border border-white/5 shadow-xl">
+           <div className="flex flex-row lg:flex-col gap-2 md:gap-4 overflow-x-auto no-scrollbar">
              {players.map((p, idx) => {
                const active = turnIndex === idx;
                const handCount = (gameState?.hands?.[p.id] || []).length;
                return (
-                 <div key={p.id} className={`flex items-center justify-between p-2 md:p-4 rounded-xl md:rounded-2xl border-2 transition-all duration-500 shrink-0 lg:shrink ${active ? 'bg-[#81b64c]/10 border-[#81b64c] shadow-lg scale-[1.03]' : 'bg-[#1a1917] border-transparent opacity-70'}`}>
-                    <div className="flex items-center gap-2 md:gap-4">
-                      <img src={p.avatar} className="w-8 h-8 md:w-12 md:h-12 rounded-lg md:rounded-xl border border-white/10" alt="av" />
-                      <span className="font-black text-[10px] md:text-sm text-white/90 truncate max-w-[80px] md:max-w-[140px] uppercase tracking-tight">{p.name}</span>
+                 <div key={p.id} className={`flex items-center justify-between p-2 md:p-4 rounded-lg md:rounded-xl border transition-all duration-500 shrink-0 lg:shrink ${active ? 'bg-[#81b64c]/10 border-[#81b64c] shadow-md' : 'bg-[#1a1917] border-transparent opacity-60'}`}>
+                    <div className="flex items-center gap-2 md:gap-3">
+                      <img src={p.avatar} className="w-6 h-6 md:w-10 md:h-10 rounded-md md:rounded-xl" alt="av" />
+                      <span className="font-black text-[9px] md:text-xs text-white/90 truncate max-w-[60px] md:max-w-[120px] uppercase">{p.name}</span>
                     </div>
-                    <div className="bg-black/80 px-2 md:px-4 py-1 md:py-2 rounded-lg md:rounded-xl font-mono text-[8px] md:text-xs font-black text-[#81b64c] border border-[#81b64c]/20 shadow-inner ml-2">
+                    <div className="bg-black/60 px-2 py-0.5 md:py-1 rounded-md md:rounded-lg font-mono text-[7px] md:text-[10px] font-black text-[#81b64c] ml-2">
                       {handCount} PC
                     </div>
                  </div>
@@ -513,23 +521,24 @@ const DominoGame: React.FC<{ currentUser: User }> = ({ currentUser }) => {
            </div>
          </div>
 
-         <div className="flex-1 bg-[#262421] rounded-[1.5rem] md:rounded-[3rem] border border-white/5 shadow-2xl flex flex-col overflow-hidden min-h-[350px] md:min-h-[450px]">
-            <div className="p-4 md:p-7 border-b border-white/5 bg-black/20 flex items-center gap-3 md:gap-4">
-              <div className="w-2 h-2 md:w-3 md:h-3 bg-[#81b64c] rounded-full animate-pulse shadow-[0_0_8px_#81b64c]" />
-              <span className="font-black text-[10px] md:text-xs text-white uppercase tracking-[0.2em]">COMMS FEED LINK</span>
+         {/* Chat Area */}
+         <div className="flex-1 bg-[#262421] rounded-xl md:rounded-[2.5rem] border border-white/5 shadow-xl flex flex-col overflow-hidden min-h-[220px] md:min-h-[400px]">
+            <div className="p-3 md:p-5 border-b border-white/5 bg-black/20 flex items-center gap-2">
+              <div className="w-2 h-2 bg-[#81b64c] rounded-full animate-pulse" />
+              <span className="font-black text-[8px] md:text-[10px] text-white uppercase tracking-widest">COMMS FEED</span>
             </div>
             
-            <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4 md:space-y-5 custom-scrollbar">
+            <div className="flex-1 p-3 md:p-5 overflow-y-auto space-y-3 md:space-y-4 custom-scrollbar h-full">
                {chatMessages.length === 0 ? (
-                 <div className="h-full flex flex-col items-center justify-center opacity-10 py-6 md:py-10">
-                   <i className="fas fa-terminal text-4xl md:text-6xl mb-4 md:mb-6 text-gray-700"></i>
-                   <p className="text-[9px] md:text-[11px] font-black uppercase tracking-[0.3em]">Criptografia...</p>
+                 <div className="h-full flex flex-col items-center justify-center opacity-10 py-6">
+                   <i className="fas fa-terminal text-2xl md:text-5xl mb-2 md:mb-4 text-gray-700"></i>
+                   <p className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Criptografado...</p>
                  </div>
                ) : (
                  chatMessages.map((m, i) => (
                    <div key={i} className={`flex flex-col ${m.user === 'SISTEMA' ? 'items-center py-1' : ''}`}>
-                     {m.user !== 'SISTEMA' && <span className={`text-[8px] font-black text-gray-500 uppercase mb-1 px-2 ${m.user === currentUser.name ? 'self-end' : ''}`}>{m.user}</span>}
-                     <div className={`px-4 py-2.5 rounded-xl md:rounded-[1.5rem] text-[11px] md:text-[13px] shadow-lg border transition-all ${m.user === 'SISTEMA' ? 'bg-transparent border-transparent text-[#81b64c] italic text-[9px] text-center' : m.user === currentUser.name ? 'bg-[#81b64c]/10 border-[#81b64c]/30 text-white self-end rounded-tr-none' : 'bg-[#1a1917] border-white/5 text-gray-300 self-start rounded-tl-none'}`}>
+                     {m.user !== 'SISTEMA' && <span className={`text-[7px] md:text-[8px] font-black text-gray-500 uppercase mb-0.5 px-2 ${m.user === currentUser.name ? 'self-end' : ''}`}>{m.user}</span>}
+                     <div className={`px-3 py-1.5 md:px-4 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-[12px] shadow-sm border ${m.user === 'SISTEMA' ? 'bg-transparent border-transparent text-[#81b64c] italic text-[8px] md:text-[9px] text-center' : m.user === currentUser.name ? 'bg-[#81b64c]/10 border-[#81b64c]/30 text-white self-end rounded-tr-none' : 'bg-[#1a1917] border-white/5 text-gray-300 self-start rounded-tl-none'}`}>
                         {m.text}
                      </div>
                    </div>
@@ -538,16 +547,16 @@ const DominoGame: React.FC<{ currentUser: User }> = ({ currentUser }) => {
                <div ref={chatEndRef} />
             </div>
 
-            <div className="bg-[#1a1917] border-t border-white/5 p-4 md:p-5 space-y-4 md:space-y-5">
-              <div className="flex justify-between px-2 overflow-x-auto gap-2 no-scrollbar">
+            <div className="bg-[#1a1917] border-t border-white/5 p-3 md:p-4 space-y-3">
+              <div className="flex justify-between px-1 overflow-x-auto gap-2 no-scrollbar">
                 {QUICK_EMOJIS.map(e => (
-                  <button key={e} onClick={() => handleSendMessage(e)} className="text-xl md:text-2xl transition-all hover:scale-150 filter drop-shadow-lg shrink-0">{e}</button>
+                  <button key={e} onClick={() => handleSendMessage(e)} className="text-lg md:text-xl transition-all hover:scale-125 shrink-0">{e}</button>
                 ))}
               </div>
-              <form onSubmit={e => { e.preventDefault(); handleSendMessage(chatInput); }} className="flex gap-2 md:gap-3">
-                <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Transmitir..." className="flex-1 bg-[#262421] border border-white/10 rounded-xl md:rounded-2xl px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs outline-none text-white font-mono shadow-inner focus:ring-1 focus:ring-[#81b64c]/50" />
-                <button type="submit" className="bg-[#81b64c] w-10 h-10 md:w-14 md:h-14 rounded-xl md:rounded-2xl flex items-center justify-center text-white shadow-[0_4px_0_#456528] active:translate-y-1 transition-all shrink-0">
-                  <i className="fas fa-paper-plane text-sm md:text-lg"></i>
+              <form onSubmit={e => { e.preventDefault(); handleSendMessage(chatInput); }} className="flex gap-2">
+                <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Transm..." className="flex-1 bg-[#262421] border border-white/10 rounded-lg md:rounded-xl px-3 md:px-5 py-2 md:py-3 text-[9px] md:text-xs outline-none text-white font-mono shadow-inner focus:ring-1 focus:ring-[#81b64c]/30" />
+                <button type="submit" className="bg-[#81b64c] w-9 h-9 md:w-12 md:h-12 rounded-lg md:rounded-xl flex items-center justify-center text-white active:scale-90 transition-all">
+                  <i className="fas fa-paper-plane text-xs md:text-sm"></i>
                 </button>
               </form>
             </div>
